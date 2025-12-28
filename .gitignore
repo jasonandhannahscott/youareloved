@@ -1,0 +1,10 @@
+# Ignore specific directories
+Backup/
+icons/
+protected/
+
+# Ignore specific files
+login.php
+click.mp3
+debug_serve.log
+shuffle.png
