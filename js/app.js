@@ -15,7 +15,7 @@ const APP = {
     pageVisible: true,
     isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), 
     
-    currentBand: 'book1', 
+    currentBand: 'radio', 
     currentIndex: 0,
     currentTrackSrc: null,
     nextTrackHowl: null,
@@ -872,7 +872,7 @@ function setupDualDraggables() {
         
         const distanceToSnap = Math.abs(rawIndex - clampedIndex);
         APP.musicGain.gain.value = (1 - distanceToSnap) * APP.volume;
-        setStaticGain(APP.isPlaying ? (distanceToSnap * 0.6 * APP.volume) : 0);
+        setStaticGain(APP.isPlaying ? (distanceToSnap * 0.3 * APP.volume) : 0);
 
         renderVirtualDial(x);
         

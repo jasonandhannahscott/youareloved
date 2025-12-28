@@ -1,182 +1,109 @@
 <?php
-
-// --- DEBUG SETTINGS ---
-// Set to true to enable logging to 'debug_serve.log'
-// Set to false when done troubleshooting
-$debugMode = false;
-
-function writeLog($message) {
-    global $debugMode;
-    if ($debugMode) {
-        $logFile = __DIR__ . '/debug_serve.log';
-        $timestamp = date('Y-m-d H:i:s');
-        // Use FILE_APPEND to keep history, usually easier to read on tail -f
-        @file_put_contents($logFile, "[$timestamp] $message" . PHP_EOL, FILE_APPEND);
-    }
-}
-
-// 1. Disable Compression (Crucial for video files)
-@ini_set('zlib.output_compression', 'Off');
-@ini_set('output_buffering', 'Off');
-@ini_set('output_handler', '');
-
 session_start();
 
-// --- CONFIGURATION ---
+// Inline auth config
 $realPassword = 'zenith1950';
-$cookieName   = 'zenith_remember_me';
-$salt         = 'some_random_salt_string';
+$cookieName = 'zenith_remember_me';
+$salt = 'some_random_salt_string';
 
-// 2. Security Check
-$isAuthenticated = false;
-
-if (!empty($_SESSION['zenith_auth'])) {
-    $isAuthenticated = true;
+// Auth check
+$isLoggedIn = false;
+if (!empty($_SESSION['zenith_auth']) && $_SESSION['zenith_auth'] === true) {
+    $isLoggedIn = true;
 } elseif (isset($_COOKIE[$cookieName])) {
-    $expectedToken = hash('sha256', $realPassword . $salt);
-    if ($_COOKIE[$cookieName] === $expectedToken) {
+    if ($_COOKIE[$cookieName] === hash('sha256', $realPassword . $salt)) {
         $_SESSION['zenith_auth'] = true;
-        $isAuthenticated = true;
+        $isLoggedIn = true;
     }
 }
 
-if (!$isAuthenticated) {
-    writeLog("Auth Failed for IP: " . $_SERVER['REMOTE_ADDR']);
-    header("HTTP/1.0 403 Forbidden");
-    die("Access Denied");
+if (!$isLoggedIn) {
+    http_response_code(401);
+    exit('Unauthorized');
 }
 
-// 3. Close the session immediately to prevent locking 
-// (Allows the browser to download parallel streams if needed)
-session_write_close();
-
-// --- CRITICAL FIX 1: NGINX BUFFERING ---
-// Explicitly tell Nginx NOT to buffer this response. 
-// This fixes the NS_BINDING_ABORTED error in Firefox/Chrome.
-header('X-Accel-Buffering: no');
-
-// 4. Path Sanitization
 $file = $_GET['file'] ?? '';
-writeLog("Raw Request: " . $file);
 
-// --- CRITICAL FIX 2: WINDOWS PATHS ---
-// Convert Windows backslashes (\) to Linux forward slashes (/)
-// This fixes the 404 error for folders containing backslashes in the JSON.
-$file = str_replace('\\', '/', $file);
+if (empty($file)) {
+    http_response_code(400);
+    exit('Bad request');
+}
 
-$file = str_replace(['..', "\0"], '', $file); // Added null byte protection
+$file = urldecode($file);
+$file = str_replace(['..', "\0"], '', $file);
 
-// 5. Define the protected path
-$path = __DIR__ . '/protected/' . $file;
-writeLog("Resolved Path: " . $path);
+$basePath = realpath(__DIR__ . '/protected');
+if ($basePath === false) {
+    http_response_code(500);
+    exit('Protected directory not found');
+}
 
-if (file_exists($path) && is_file($path)) {
-    
-    // Check read permissions
-    if (!is_readable($path)) {
-        writeLog("ERROR: File exists but is NOT readable (Check Permissions): " . $path);
-        header("HTTP/1.0 403 Forbidden");
-        die("File permission error");
-    }
+$filePath = $basePath . '/' . $file;
+$realFilePath = realpath($filePath);
 
-    // 6. AGGRESSIVE BUFFER CLEANING
-    // Loop until all buffers are closed to remove any stray whitespace included by other scripts/configs
-    while (ob_get_level()) {
-        ob_end_clean();
-    }
+if ($realFilePath === false || strpos($realFilePath, $basePath) !== 0) {
+    http_response_code(404);
+    exit('File not found: ' . $file);
+}
 
-    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-    $mimeTypes = [
-        'json' => 'application/json',
-        'mp3'  => 'audio/mpeg',
-        'mp4'  => 'video/mp4',
-        'm4a'  => 'audio/mp4',
-        'mkv'  => 'video/x-matroska',
-        'webm' => 'video/webm'
-    ];
-    
-    $contentType = $mimeTypes[$ext] ?? 'application/octet-stream';
-    $fileSize = filesize($path);
-    
-    $fp = fopen($path, 'rb');
-    if (!$fp) {
-        writeLog("CRITICAL: Could not fopen path: " . $path);
-        header("HTTP/1.0 500 Internal Server Error");
-        die("Could not open file");
-    }
+if (!file_exists($realFilePath) || !is_readable($realFilePath)) {
+    http_response_code(404);
+    exit('File not readable');
+}
 
+$extension = strtolower(pathinfo($realFilePath, PATHINFO_EXTENSION));
+$mimeTypes = [
+    'json' => 'application/json',
+    'mp3' => 'audio/mpeg',
+    'mp4' => 'video/mp4',
+    'mkv' => 'video/x-matroska',
+    'webm' => 'video/webm',
+    'jpg' => 'image/jpeg',
+    'jpeg' => 'image/jpeg',
+    'png' => 'image/png',
+    'gif' => 'image/gif',
+];
+
+$contentType = $mimeTypes[$extension] ?? 'application/octet-stream';
+$fileSize = filesize($realFilePath);
+
+if (in_array($extension, ['mp3', 'mp4', 'mkv', 'webm'])) {
     $start = 0;
     $end = $fileSize - 1;
-    $isRange = false;
-
-    // --- RANGE LOGIC FIX ---
+    
     if (isset($_SERVER['HTTP_RANGE'])) {
-        $isRange = true;
-        writeLog("Range Request: " . $_SERVER['HTTP_RANGE']);
-        
-        // Case 1: Standard Range (e.g., bytes=0- or bytes=0-1024)
-        if (preg_match('/bytes=(\d+)-(\d*)/', $_SERVER['HTTP_RANGE'], $matches)) {
+        $range = $_SERVER['HTTP_RANGE'];
+        if (preg_match('/bytes=(\d+)-(\d*)/', $range, $matches)) {
             $start = intval($matches[1]);
-            $end = ($matches[2] === '') ? $fileSize - 1 : intval($matches[2]);
-        } 
-        // Case 2: Suffix Range (e.g., bytes=-500 -> last 500 bytes)
-        // This is the specific fix for Firefox metadata errors
-        elseif (preg_match('/bytes=-(\d+)/', $_SERVER['HTTP_RANGE'], $matches)) {
-            $suffix = intval($matches[1]);
-            $start = $fileSize - $suffix;
-            $end = $fileSize - 1;
+            if (!empty($matches[2])) {
+                $end = intval($matches[2]);
+            }
         }
-
-        // Safety bounds
-        $start = max(0, $start);
-        $end = min($end, $fileSize - 1);
-    }
-
-    $length = $end - $start + 1;
-
-    if ($isRange) {
-        header('HTTP/1.1 206 Partial Content');
-        header('Content-Range: bytes ' . $start . '-' . $end . '/' . $fileSize);
-    } else {
-        header('HTTP/1.1 200 OK');
-    }
-    
-    header('Content-Type: ' . $contentType);
-    header('Content-Length: ' . $length);
-    header('Accept-Ranges: bytes');
-    header('Content-Disposition: inline; filename="' . basename($path) . '"');
-    
-    // Explicitly disable cache for testing if issues persist
-    // header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-    // header('Cache-Control: post-check=0, pre-check=0', false);
-    // header('Pragma: no-cache');
-
-    fseek($fp, $start);
-
-    $bufferSize = 1024 * 8; 
-    $bytesSent = 0;
-
-    while (!feof($fp) && ($bytesSent < $length)) {
-        // Stop serving if user disconnects (Saves bandwidth)
-        if (connection_aborted()) {
-            break;
-        }
-
-        $readSize = min($bufferSize, $length - $bytesSent);
-        $buffer = fread($fp, $readSize);
-        echo $buffer;
-        flush(); 
         
-        $bytesSent += strlen($buffer);
+        http_response_code(206);
+        header("Content-Range: bytes $start-$end/$fileSize");
     }
-
+    
+    header('Accept-Ranges: bytes');
+    header("Content-Length: " . ($end - $start + 1));
+    header("Content-Type: $contentType");
+    
+    $fp = fopen($realFilePath, 'rb');
+    fseek($fp, $start);
+    
+    $bufferSize = 8192;
+    $remaining = $end - $start + 1;
+    
+    while ($remaining > 0 && !feof($fp)) {
+        $readSize = min($bufferSize, $remaining);
+        echo fread($fp, $readSize);
+        $remaining -= $readSize;
+        flush();
+    }
+    
     fclose($fp);
-    writeLog("Stream Complete/Aborted. Sent: $bytesSent bytes");
-    exit;
-
 } else {
-    writeLog("ERROR: File Not Found at path: " . $path);
-    header("HTTP/1.0 404 Not Found");
-    die("File not found");
+    header("Content-Type: $contentType");
+    header("Content-Length: $fileSize");
+    readfile($realFilePath);
 }
-?>
