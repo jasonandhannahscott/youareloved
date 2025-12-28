@@ -1,3 +1,7 @@
+// ZENITH APP.JS - VERSION 2.0 - PRELOAD DISABLED
+// If you don't see "VERSION 2.0" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 2.0 LOADED - PRELOAD DISABLED ===');
+
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
 const qsa = (s) => document.querySelectorAll(s);
@@ -19,7 +23,8 @@ const APP = {
     currentIndex: 0,
     currentTrackSrc: null,
     nextTrackHowl: null,
-    nextTrackIndex: -1,
+    nextTrackSrc: null,
+    recentBandSwitch: false,
     pendingIndex: -1,
         
     audioContext: null, gainNode: null, staticNode: null,
@@ -30,6 +35,7 @@ const APP = {
     volume: 0.8, 
     expandTimer: null,
     volumeSliderTimeout: null,
+    bandSwitchTimer: null,
 
     radioState: {
         isShuffled: false,
@@ -114,6 +120,8 @@ function hideOnboardingHints() {
 async function initializeApp() {
     if (APP.initialized) return;
     APP.initialized = true;
+    
+    console.log('[initializeApp] Starting, default currentBand:', APP.currentBand);
 
     loadUserPlaylists();
     registerServiceWorker();
@@ -127,12 +135,14 @@ async function initializeApp() {
             return;
         }
         APP.playlist = await plResponse.json();
+        console.log('[initializeApp] Loaded playlist.json, book1 tracks:', APP.playlist.book1?.length, 'book2 tracks:', APP.playlist.book2?.length);
         
         try {
             const radioResponse = await fetch('serve.php?file=radio.json');
             if (radioResponse.ok) {
                 APP.radioData = await radioResponse.json();
                 processRadioData();
+                console.log('[initializeApp] Loaded radio.json, radioPlaylist tracks:', APP.radioPlaylist?.length);
             }
         } catch (e) { console.warn("Failed to load radio.json", e); }
 
@@ -151,10 +161,12 @@ async function initializeApp() {
         $('video-player').addEventListener('ended', handleAutoplay);
         
         setupControls();
+        console.log('[initializeApp] About to buildDial, currentBand:', APP.currentBand);
         buildDial();
         gsap.to('.radio-cabinet', { opacity: 1, duration: 1.5, ease: 'power2.out' });
         
         APP.isPlaying = true;
+        console.log('[initializeApp] About to loadTrack(0), currentBand:', APP.currentBand);
         loadTrack(0);
         
     } catch (error) {
@@ -801,18 +813,15 @@ function renderVirtualDial(currentX) {
 }
 
 function preloadNextTrack(currentIndex) {
+    // DISABLED: Preloading is disabled to fix band switching bug
+    // This function will be re-enabled once the core issue is resolved
+    console.log('[preloadNextTrack] DISABLED - skipping preload');
+    return;
+    
     const list = (APP.currentBand === 'radio') ? APP.radioPlaylist : APP.playlist[APP.currentBand];
     if (!list) return;
     
     const nextIndex = (currentIndex + 1) % list.length;
-
-    if (APP.nextTrackIndex === nextIndex && APP.nextTrackHowl && APP.nextTrackHowl.state() === 'loaded') {
-        return;
-    }
-
-    if (APP.nextTrackHowl) {
-        APP.nextTrackHowl.unload();
-    }
 
     let srcAudio;
     const track = list[nextIndex];
@@ -825,15 +834,31 @@ function preloadNextTrack(currentIndex) {
     }
 
     if (!srcAudio) return;
+    
+    const srcUrl = getSecureUrl(srcAudio);
+    
+    console.log('[preloadNextTrack] Preloading index:', nextIndex, 'band:', APP.currentBand, 'url:', srcUrl);
 
-    APP.nextTrackIndex = nextIndex;
+    // Already preloading this exact track
+    if (APP.nextTrackSrc === srcUrl && APP.nextTrackHowl) {
+        console.log('[preloadNextTrack] Already preloading this track');
+        return;
+    }
+
+    if (APP.nextTrackHowl) {
+        console.log('[preloadNextTrack] Clearing old preload:', APP.nextTrackSrc);
+        APP.nextTrackHowl.unload();
+    }
+
+    APP.nextTrackSrc = srcUrl;
     APP.nextTrackHowl = new Howl({
-        src: [getSecureUrl(srcAudio)],
+        src: [srcUrl],
         format: ['mp3'], html5: true,
         preload: true,
         autoplay: false,
         onloaderror: function() {
-            console.warn("Failed to preload next track");
+            console.warn("[preloadNextTrack] Failed to preload next track");
+            APP.nextTrackSrc = null;
         }
     });
 }
@@ -1156,9 +1181,14 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
 
     let track, srcAudio, srcVideo, isVideo;
     const list = (APP.currentBand === 'radio') ? APP.radioPlaylist : APP.playlist[APP.currentBand];
+    
+    console.log('[loadTrack] Called with index:', index, 'currentBand:', APP.currentBand, 'list length:', list?.length);
+    
     if (!list || !list[index]) return;
 
     track = list[index];
+    
+    console.log('[loadTrack] Track:', track?.Title || track?.title, 'Artist:', track?.Artist || track?.artist);
 
     if (APP.currentBand === 'radio') {
         srcAudio = 'radio/' + cleanPath(track.src_audio);
@@ -1170,6 +1200,8 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
         srcVideo = ensureFolderPath(cleanPath(track.src_video));
         isVideo = (srcVideo && /\.(mp4|mkv|webm)$/i.test(srcVideo));
     }
+    
+    console.log('[loadTrack] srcAudio:', srcAudio);
 
     if (srcAudio === APP.currentTrackSrc && !isVideo) {
         if (updateLayout) updateInterfaceLayout(false);
@@ -1203,23 +1235,30 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     }
 
     let newHowl;
-    if (APP.nextTrackIndex === index && APP.nextTrackHowl) {
-        console.log("Using preloaded track!");
-        newHowl = APP.nextTrackHowl;
+    const targetUrl = getSecureUrl(srcAudio);
+    
+    console.log('[loadTrack] targetUrl:', targetUrl);
+    console.log('[loadTrack] currentBand:', APP.currentBand);
+    
+    // DISABLED: Preload reuse is disabled to fix band switching bug
+    // Always create a fresh Howl to ensure correct track plays
+    // Clear any stale preload
+    if (APP.nextTrackHowl) {
+        console.log('[loadTrack] Clearing stale preload:', APP.nextTrackSrc);
+        APP.nextTrackHowl.unload();
         APP.nextTrackHowl = null;
-        APP.nextTrackIndex = -1;
-        newHowl.off('end'); 
-        newHowl.on('end', handleAutoplay);
-    } else {
-        newHowl = new Howl({
-            src: [getSecureUrl(srcAudio)],
-            format: ['mp3'], html5: true,
-            onend: handleAutoplay,
-            onload: function() {
-                if (APP.currentHowl !== this) { this.unload(); return; }
-            }
-        });
+        APP.nextTrackSrc = null;
     }
+    
+    console.log("[loadTrack] Creating new Howl for:", targetUrl);
+    newHowl = new Howl({
+        src: [targetUrl],
+        format: ['mp3'], html5: true,
+        onend: handleAutoplay,
+        onload: function() {
+            if (APP.currentHowl !== this) { this.unload(); return; }
+        }
+    });
 
     if (APP.currentHowl) {
         if (APP.currentHowl.playing()) {
@@ -1247,6 +1286,10 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     }
 
     preloadNextTrack(index);
+    
+    // Clear the band switch flag after we've loaded a track and started preloading
+    // This allows preloading to work for subsequent tracks within the same band
+    APP.recentBandSwitch = false;
 }
 
 function handleAutoplay() {
@@ -1256,9 +1299,19 @@ function handleAutoplay() {
 }
 
 function tuneToStation(index) {
+    console.log('[tuneToStation] index:', index, 'currentBand:', APP.currentBand);
+    
+    // Cancel pending band switch load since we're tuning to a specific station
+    if (APP.bandSwitchTimer) {
+        console.log('[tuneToStation] Cancelling bandSwitchTimer');
+        clearTimeout(APP.bandSwitchTimer);
+        APP.bandSwitchTimer = null;
+    }
+    
     if (APP.currentBand === 'radio') {
         const fmTrack = $('fm-track');
         const song = APP.radioPlaylist[index];
+        console.log('[tuneToStation] Radio song:', song?.Title, 'Artist:', song?.Artist);
         let artistIdx = 0;
         if (song) artistIdx = APP.radioArtists.findIndex(a => a.folder === song.ParentFolder);
         snapVirtualTo(index, false, null, true);
@@ -1404,21 +1457,59 @@ function setupControls() {
 
     qs('.piano-keys-group').addEventListener('click', (e) => {
         if (e.target.classList.contains('band-btn')) {
+            const newBand = e.target.dataset.band;
+            console.log('[Band Switch] Switching from', APP.currentBand, 'to', newBand);
+            
             qsa('.band-btn').forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
-            APP.currentBand = e.target.dataset.band;
+            APP.currentBand = newBand;
             APP.currentIndex = 0;
+            
+            // Mark that we recently switched bands - prevents using stale preloads
+            APP.recentBandSwitch = true;
+            
+            // Clear preloaded track from previous band
+            if (APP.nextTrackHowl) {
+                console.log('[Band Switch] Clearing preload, was:', APP.nextTrackSrc);
+                APP.nextTrackHowl.unload();
+                APP.nextTrackHowl = null;
+            }
+            APP.nextTrackSrc = null;
+            
+            // Cancel any pending band switch load
+            if (APP.bandSwitchTimer) {
+                clearTimeout(APP.bandSwitchTimer);
+            }
+            
             buildDial();
-            setTimeout(() => loadTrack(0), 100);
+            APP.bandSwitchTimer = setTimeout(() => {
+                console.log('[Band Switch] Timer fired, calling loadTrack(0)');
+                APP.bandSwitchTimer = null;
+                loadTrack(0);
+            }, 100);
         }
     });
 
     $('left-arrow').addEventListener('click', () => { 
         hideOnboardingHints();
+        console.log('[Tune Left] currentBand:', APP.currentBand, 'currentIndex:', APP.currentIndex);
+        // Cancel pending band switch load since user is manually tuning
+        if (APP.bandSwitchTimer) {
+            console.log('[Tune Left] Cancelling bandSwitchTimer');
+            clearTimeout(APP.bandSwitchTimer);
+            APP.bandSwitchTimer = null;
+        }
         if(APP.currentIndex > 0) tuneToStation(APP.currentIndex - 1); 
     });
     $('right-arrow').addEventListener('click', () => { 
         hideOnboardingHints();
+        console.log('[Tune Right] currentBand:', APP.currentBand, 'currentIndex:', APP.currentIndex);
+        // Cancel pending band switch load since user is manually tuning
+        if (APP.bandSwitchTimer) {
+            console.log('[Tune Right] Cancelling bandSwitchTimer');
+            clearTimeout(APP.bandSwitchTimer);
+            APP.bandSwitchTimer = null;
+        }
         const max = APP.currentBand === 'radio' ? APP.radioPlaylist.length : APP.playlist[APP.currentBand].length;
         if(APP.currentIndex < max - 1) tuneToStation(APP.currentIndex + 1); 
     });
@@ -1482,7 +1573,7 @@ function renderBookList() {
                 <div class="title">${track.title}</div>
             </div>
             <div class="program-item-actions">
-                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}" title="Download for offline">↓</button>
+                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}" title="Download for offline">?</button>
                 <button class="add-to-playlist-btn" data-track-index="${index}" title="Add to playlist">+</button>
             </div>
         </div>`;
@@ -1548,7 +1639,7 @@ function renderTrackList() {
                 <div class="title">${title}</div>
             </div>
             <div class="program-item-actions">
-                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}" title="Download for offline">↓</button>
+                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}" title="Download for offline">?</button>
                 <button class="add-to-playlist-btn" data-track-index="${index}" title="Add to playlist">+</button>
             </div>
         </div>`;
@@ -1685,8 +1776,8 @@ function renderPlaylistList() {
                     <div class="offline-status">${cachedCount}/${pl.tracks.length} offline</div>
                 </div>
                 <div class="playlist-meta">
-                    <button class="download-playlist-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${pl.id}" title="${allCached ? 'All downloaded' : 'Download all for offline'}">↓</button>
-                    <button class="delete-playlist-btn" data-playlist-id="${pl.id}" title="Delete playlist">×</button>
+                    <button class="download-playlist-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${pl.id}" title="${allCached ? 'All downloaded' : 'Download all for offline'}">?</button>
+                    <button class="delete-playlist-btn" data-playlist-id="${pl.id}" title="Delete playlist">�</button>
                 </div>
             </div>`;
         }).join('');
@@ -1741,9 +1832,9 @@ function renderPlaylistTracks(playlistId) {
     const allCached = cachedCount === playlist.tracks.length && playlist.tracks.length > 0;
     
     let html = `<div class="playlist-header-bar">
-        <button class="back-to-playlists-btn">← Back</button>
+        <button class="back-to-playlists-btn">? Back</button>
         <div class="playlist-title">${playlist.name}</div>
-        ${playlist.tracks.length > 0 ? `<button class="download-all-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${playlistId}" title="${allCached ? 'All downloaded' : 'Download all'}">↓ All</button>` : ''}
+        ${playlist.tracks.length > 0 ? `<button class="download-all-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${playlistId}" title="${allCached ? 'All downloaded' : 'Download all'}">? All</button>` : ''}
     </div>`;
     
     if (playlist.tracks.length === 0) {
@@ -1761,8 +1852,8 @@ function renderPlaylistTracks(playlistId) {
                     <div class="title">${title}</div>
                 </div>
                 <div class="program-item-actions">
-                    <button class="download-track-btn ${isCached ? 'downloaded' : ''}" data-track='${trackJson}' data-track-index="${index}" title="${isCached ? 'Downloaded' : 'Download'}">↓</button>
-                    <button class="remove-from-playlist-btn" data-track-index="${index}" title="Remove from playlist">×</button>
+                    <button class="download-track-btn ${isCached ? 'downloaded' : ''}" data-track='${trackJson}' data-track-index="${index}" title="${isCached ? 'Downloaded' : 'Download'}">?</button>
+                    <button class="remove-from-playlist-btn" data-track-index="${index}" title="Remove from playlist">�</button>
                 </div>
             </div>`;
         }).join('');

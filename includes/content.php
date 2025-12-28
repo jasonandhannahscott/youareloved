@@ -39,9 +39,9 @@
 
                 <div class="center-console">
                     <div class="piano-keys-group">
-                        <button class="piano-key active band-btn" data-band="book1">Book I</button>
+                        <button class="piano-key band-btn" data-band="book1">Book I</button>
                         <button class="piano-key band-btn" data-band="book2">Book II</button>
-                        <button class="piano-key band-btn" data-band="radio">Radio</button>
+                        <button class="piano-key active band-btn" data-band="radio">Radio</button>
                     </div>
                     <button class="push-button program-guide-btn" id="guide-btn">List</button>
                 </div>
