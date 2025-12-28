@@ -1,6 +1,6 @@
-// ZENITH APP.JS - VERSION 2.0 - PRELOAD DISABLED
-// If you don't see "VERSION 2.0" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 2.0 LOADED - PRELOAD DISABLED ===');
+// ZENITH APP.JS - VERSION 3.0 - NETWORK-FIRST CACHING
+// If you don't see "VERSION 3.0" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 3.0 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
@@ -38,7 +38,7 @@ const APP = {
     bandSwitchTimer: null,
 
     radioState: {
-        isShuffled: false,
+        isShuffled: true,  // CHANGED: Default to true for radio-like experience
         viewMode: 'tracks', 
         activeGenre: null,
         activeArtistFilter: null,
@@ -161,6 +161,13 @@ async function initializeApp() {
         $('video-player').addEventListener('ended', handleAutoplay);
         
         setupControls();
+        
+        // ADDED: Set shuffle button to active state on load since shuffle is enabled by default
+        const shuffleBtn = $('shuffle-btn');
+        if (shuffleBtn && APP.radioState.isShuffled) {
+            shuffleBtn.classList.add('active');
+        }
+        
         console.log('[initializeApp] About to buildDial, currentBand:', APP.currentBand);
         buildDial();
         gsap.to('.radio-cabinet', { opacity: 1, duration: 1.5, ease: 'power2.out' });
@@ -365,17 +372,50 @@ function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js')
             .then((registration) => {
-                console.log('Service Worker registered:', registration.scope);
+                console.log('[App] Service Worker registered:', registration.scope);
                 APP.swReady = true;
                 
                 // Request cached URLs list
                 if (navigator.serviceWorker.controller) {
                     navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHED_URLS' });
                 }
+                
+                // Check for updates immediately and every 60 seconds
+                registration.update();
+                setInterval(() => registration.update(), 60000);
+                
+                // Handle updates - if there's a waiting worker, activate it
+                if (registration.waiting) {
+                    console.log('[App] New service worker waiting, activating...');
+                    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+                
+                // Listen for new service workers
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    console.log('[App] New service worker installing...');
+                    
+                    newWorker.addEventListener('statechange', () => {
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            console.log('[App] New service worker installed, activating...');
+                            newWorker.postMessage({ type: 'SKIP_WAITING' });
+                        }
+                    });
+                });
             })
             .catch((error) => {
-                console.warn('Service Worker registration failed:', error);
+                console.warn('[App] Service Worker registration failed:', error);
             });
+        
+        // Reload page when new service worker takes control
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+                refreshing = true;
+                console.log('[App] New service worker activated, reloading...');
+                window.location.reload();
+            }
+        });
         
         // Listen for messages from service worker
         navigator.serviceWorker.addEventListener('message', (event) => {
@@ -393,12 +433,15 @@ function registerServiceWorker() {
                 updateOfflineIndicators();
             }
             if (event.data.type === 'AUDIO_CACHE_FAILED') {
-                console.warn('Failed to cache:', event.data.url);
+                console.warn('[App] Failed to cache:', event.data.url);
                 updateDownloadProgress();
             }
             if (event.data.type === 'AUDIO_CACHE_CLEARED') {
                 APP.cachedUrls.clear();
                 updateOfflineIndicators();
+            }
+            if (event.data.type === 'SW_UPDATED') {
+                console.log('[App] Service worker updated to version:', event.data.version);
             }
         });
     }

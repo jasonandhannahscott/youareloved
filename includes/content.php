@@ -74,7 +74,7 @@
             </div>
             
             <div class="shuffle-container">
-                <div class="shuffle-btn-icon" id="shuffle-btn" title="Shuffle">
+                <div class="shuffle-btn-icon active" id="shuffle-btn" title="Shuffle">
                     <div class="shuffle-mask"></div>
                 </div>
             </div>

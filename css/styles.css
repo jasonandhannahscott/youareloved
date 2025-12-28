@@ -535,7 +535,17 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 
 .program-item.active-track { background: rgba(212, 175, 55, 0.25); border-left: 5px solid var(--brass-gold); padding-left: 1rem; }
 .program-item.active-track .artist { color: #000; }
-.program-item.active-track::after { content: '\25BA  NOW PLAYING'; display: block; font-size: 0.8rem; font-weight: 700; color: var(--needle-red); letter-spacing: 0.1em; margin-top: 4px; }
+.program-item.active-track::after { 
+    content: '\25BA  NOW PLAYING'; 
+    display: block; 
+    font-size: 0.9rem; 
+    font-weight: 700; 
+    color: var(--needle-red); 
+    letter-spacing: 0.1em; 
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(196, 30, 58, 0.3);
+}
 
 .filter-item { padding: 1.25rem 1.5rem; border-bottom: 1px solid rgba(0,0,0,0.1); cursor: pointer; font-family: 'Oswald', sans-serif; display: flex; justify-content: space-between; align-items: center; }
 .filter-item:hover { background: rgba(212, 175, 55, 0.1); padding-left: 1.8rem; }
@@ -578,8 +588,8 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
     .control-strip.minimized .controls-row { height: 60px; padding: 5px 15px; gap: 10px; background: rgba(0,0,0,0.2); }
     .control-strip.minimized .knob-label { display: none; }
     .control-strip.minimized .dial-container { margin: 0 10px 5px 10px; height: 70px; }
-    .control-strip.minimized .station .title { display: -webkit-box; font-size: 0.7rem; line-height: 1.1; opacity: 0.8; -webkit-line-clamp: 1; }
-    .control-strip.minimized .station .artist { font-size: 0.9rem; margin-bottom: 2px; }
+    .control-strip.minimized .station .title { display: -webkit-box; font-size: 0.95rem; line-height: 1.15; opacity: 0.9; -webkit-line-clamp: 1; }
+    .control-strip.minimized .station .artist { font-size: 1.15rem; margin-bottom: 3px; }
     .control-strip.minimized .volume-control-group, 
     .control-strip.minimized .tuning-control-group { width: 50px; height: 100%; margin: 0; justify-content: center; position: relative; }
     .control-strip.minimized .center-console { padding: 4px; height: auto; }
@@ -590,13 +600,15 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
         width: 90%; max-width: none;
         top: 20px; bottom: auto; transform: translateX(-50%);
         max-height: calc(100% - 100px); 
-        padding: 1.25rem 1.5rem; font-size: 0.95rem; line-height: 1.55; justify-content: flex-start;
+        padding: 1.25rem 1.5rem; font-size: 1.05rem; line-height: 1.55; justify-content: flex-start;
     }
 
     .video-overlay { width: 96%; max-width: none; max-height: 90%; }
     
     .dial-container { height: 50%; flex: 1 1 auto; margin: 0 10px; }
     .station { width: 140px; padding: 0 15px; }
+    .station .artist { font-size: clamp(1rem, 3vw, 1.35rem); }
+    .station .title { font-size: clamp(0.9rem, 2.5vw, 1.1rem); }
     .controls-row { padding: 0 15px; height: 50%; flex: 1 1 auto; gap: 10px; margin-top: 5px; }
     
     .volume-control-group, .tuning-control-group { 
@@ -620,6 +632,10 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
     
     .radio-band .scroll-indicator { font-size: 1.2rem; }
     .program-guide { width: 95%; max-height: 85vh; }
+    
+    /* Bigger text in program guide for mobile */
+    .program-item .artist { font-size: 1.2rem; }
+    .program-item .title { font-size: 1.05rem; }
 }
 
 @media screen and (max-width: 480px) {
@@ -627,10 +643,16 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
     .dial-container { margin: 0 10px; }
     .control-strip.minimized .dial-container { margin: 0 10px 5px 10px; }
     .station { width: 130px; padding: 0 12px; }
+    .station .artist { font-size: clamp(1.05rem, 4vw, 1.25rem); }
+    .station .title { font-size: clamp(0.95rem, 3.5vw, 1.1rem); }
     .controls-row { padding: 0 5px; margin-top: 3px; }
     .center-console { gap: 8px; padding: 6px 8px; }
     .bakelite-knob, .tuning-rocker { width: 45px; height: 45px; font-size: 0.9rem; }
     .piano-key { padding: 4px 4px; font-size: 0.6rem; }
+    
+    /* Even bigger text in program guide for small mobile */
+    .program-item .artist { font-size: 1.15rem; }
+    .program-item .title { font-size: 1rem; }
 }
 
 /* Playlist Styles */
@@ -648,14 +670,14 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 
 .add-to-playlist-btn,
 .remove-from-playlist-btn {
-    width: 32px;
-    height: 32px;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
-    border: 1px solid var(--brass-gold);
-    background: rgba(0,0,0,0.2);
+    border: 2px solid var(--brass-gold);
+    background: rgba(212, 175, 55, 0.2);
     color: var(--brass-gold);
-    font-size: 1.4rem;
-    font-weight: 300;
+    font-size: 1.6rem;
+    font-weight: 400;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -671,10 +693,11 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 .remove-from-playlist-btn:hover {
     background: var(--brass-gold);
     color: #000;
+    transform: scale(1.1);
 }
 
 .remove-from-playlist-btn {
-    font-size: 1.6rem;
+    font-size: 1.8rem;
     padding-bottom: 4px;
 }
 
@@ -981,16 +1004,17 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
     
     .tab-btn {
         padding: 6px 10px;
-        font-size: 0.75rem;
+        font-size: 0.8rem;
         white-space: nowrap;
         flex-shrink: 0;
     }
     
     .add-to-playlist-btn,
     .remove-from-playlist-btn {
-        width: 28px;
-        height: 28px;
-        font-size: 1.2rem;
+        width: 40px;
+        height: 40px;
+        font-size: 1.6rem;
+        border-width: 2px;
     }
     
     .playlist-popover {
@@ -1001,11 +1025,18 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 @media screen and (max-width: 480px) {
     .tab-btn {
         padding: 5px 8px;
-        font-size: 0.7rem;
+        font-size: 0.75rem;
     }
     
     .guide-controls-container {
         padding: 8px 10px;
+    }
+    
+    .add-to-playlist-btn,
+    .remove-from-playlist-btn {
+        width: 38px;
+        height: 38px;
+        font-size: 1.5rem;
     }
 }
 
@@ -1013,7 +1044,7 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 .program-item-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     flex-shrink: 0;
 }
 
@@ -1021,13 +1052,13 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 .download-track-btn,
 .download-playlist-btn,
 .download-all-btn {
-    width: 32px;
-    height: 32px;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
-    border: 1px solid var(--brass-gold);
-    background: rgba(0,0,0,0.2);
+    border: 2px solid var(--brass-gold);
+    background: rgba(212, 175, 55, 0.2);
     color: var(--brass-gold);
-    font-size: 1rem;
+    font-size: 1.2rem;
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -1040,9 +1071,9 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 
 .download-all-btn {
     width: auto;
-    padding: 6px 12px;
+    padding: 8px 14px;
     border-radius: 4px;
-    font-size: 0.8rem;
+    font-size: 0.9rem;
     font-family: 'Oswald', sans-serif;
 }
 
@@ -1051,13 +1082,14 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 .download-all-btn:hover {
     background: var(--brass-gold);
     color: #000;
+    transform: scale(1.1);
 }
 
 .download-track-btn.downloaded,
 .download-playlist-btn.downloaded,
 .download-all-btn.downloaded {
     background: #2a5a2a;
-    border-color: #3a7a3a;
+    border-color: #4a9a4a;
     color: #7f7;
 }
 
@@ -1218,17 +1250,32 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
 @media screen and (max-width: 768px) {
     .download-track-btn,
     .download-playlist-btn {
-        width: 28px;
-        height: 28px;
-        font-size: 0.9rem;
+        width: 40px;
+        height: 40px;
+        font-size: 1.2rem;
+        border-width: 2px;
     }
     
     .download-all-btn {
-        padding: 5px 10px;
-        font-size: 0.75rem;
+        padding: 8px 14px;
+        font-size: 0.85rem;
     }
     
     .program-item-actions {
-        gap: 6px;
+        gap: 8px;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    .download-track-btn,
+    .download-playlist-btn {
+        width: 38px;
+        height: 38px;
+        font-size: 1.1rem;
+    }
+    
+    .download-all-btn {
+        padding: 7px 12px;
+        font-size: 0.8rem;
     }
 }
