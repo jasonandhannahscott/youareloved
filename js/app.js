@@ -1,6 +1,6 @@
-// ZENITH APP.JS - VERSION 3.0 - NETWORK-FIRST CACHING
-// If you don't see "VERSION 3.0" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 3.0 LOADED ===');
+// ZENITH APP.JS - VERSION 4.2 - ARTIST DOWNLOADS & HIGH CONTRAST
+// If you don't see "VERSION 4.2" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 4.2 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
@@ -36,9 +36,10 @@ const APP = {
     expandTimer: null,
     volumeSliderTimeout: null,
     bandSwitchTimer: null,
+    positionTimer: null, 
 
     radioState: {
-        isShuffled: true,  // CHANGED: Default to true for radio-like experience
+        isShuffled: true, 
         viewMode: 'tracks', 
         activeGenre: null,
         activeArtistFilter: null,
@@ -53,13 +54,77 @@ const APP = {
     }
 };
 
+function injectCustomStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        /* High Contrast Action Buttons */
+        .download-track-btn, .add-to-playlist-btn, .download-artist-btn, .remove-from-playlist-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            color: #fff;
+            border-radius: 4px;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.2s;
+            cursor: pointer;
+            margin-left: 5px;
+            font-size: 1.1em;
+        }
+        .download-track-btn:hover, .add-to-playlist-btn:hover, .download-artist-btn:hover, .remove-from-playlist-btn:hover {
+            background: #fff;
+            color: #000;
+            border-color: #fff;
+            box-shadow: 0 0 8px rgba(255,255,255,0.6);
+            transform: scale(1.05);
+        }
+        .program-item-actions {
+            gap: 8px;
+            display: flex;
+            align-items: center;
+        }
+        .downloaded {
+            color: #4CAF50 !important;
+            border-color: #4CAF50 !important;
+            background: rgba(76, 175, 80, 0.1) !important;
+        }
+        .downloading {
+            animation: pulse-download 1.5s infinite;
+        }
+        @keyframes pulse-download {
+            0% { border-color: #fff; }
+            50% { border-color: #4CAF50; background: rgba(76, 175, 80, 0.2); }
+            100% { border-color: #fff; }
+        }
+        .artist-list-item-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+        }
+        .artist-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .download-artist-btn {
+            width: 32px;
+            height: 32px;
+            font-size: 0.9em;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 function getSecureUrl(path) {
     const encoded = encodeURIComponent(path).replace(/'/g, '%27');
     return 'serve.php?file=' + encoded;
 }
 
 function shouldEnableStatic() {
-    // Disable static on mobile when page is not visible (screen locked or backgrounded)
     if (APP.isMobile && !APP.pageVisible) {
         return false;
     }
@@ -78,14 +143,11 @@ function setStaticGain(value) {
 function setupVisibilityHandler() {
     document.addEventListener('visibilitychange', () => {
         APP.pageVisible = !document.hidden;
-        
-        // If page becomes hidden on mobile, mute static immediately
         if (APP.isMobile && document.hidden && APP.staticGain) {
             APP.staticGain.gain.value = 0;
         }
     });
     
-    // Also handle page blur/focus for additional coverage
     window.addEventListener('blur', () => {
         if (APP.isMobile) {
             APP.pageVisible = false;
@@ -123,6 +185,7 @@ async function initializeApp() {
     
     console.log('[initializeApp] Starting, default currentBand:', APP.currentBand);
 
+    injectCustomStyles();
     loadUserPlaylists();
     registerServiceWorker();
     setupVisibilityHandler();
@@ -135,14 +198,14 @@ async function initializeApp() {
             return;
         }
         APP.playlist = await plResponse.json();
-        console.log('[initializeApp] Loaded playlist.json, book1 tracks:', APP.playlist.book1?.length, 'book2 tracks:', APP.playlist.book2?.length);
+        console.log('[initializeApp] Loaded playlist.json');
         
         try {
             const radioResponse = await fetch('serve.php?file=radio.json');
             if (radioResponse.ok) {
                 APP.radioData = await radioResponse.json();
                 processRadioData();
-                console.log('[initializeApp] Loaded radio.json, radioPlaylist tracks:', APP.radioPlaylist?.length);
+                console.log('[initializeApp] Loaded radio.json');
             }
         } catch (e) { console.warn("Failed to load radio.json", e); }
 
@@ -161,8 +224,8 @@ async function initializeApp() {
         $('video-player').addEventListener('ended', handleAutoplay);
         
         setupControls();
+        setupMediaSession(); 
         
-        // ADDED: Set shuffle button to active state on load since shuffle is enabled by default
         const shuffleBtn = $('shuffle-btn');
         if (shuffleBtn && APP.radioState.isShuffled) {
             shuffleBtn.classList.add('active');
@@ -180,6 +243,139 @@ async function initializeApp() {
         console.error('Failed to initialize app:', error);
         APP.initialized = false;
     }
+}
+
+// =========================================================================
+// MEDIA SESSION API (ANDROID AUTO / LOCK SCREEN)
+// =========================================================================
+
+function setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+
+    const actionHandlers = [
+        ['play',        () => { 
+            APP.isPlaying = true; 
+            if(APP.currentHowl) APP.currentHowl.play(); 
+            updatePlaybackState(); 
+        }],
+        ['pause',       () => { 
+            APP.isPlaying = false; 
+            if(APP.currentHowl) APP.currentHowl.pause(); 
+            updatePlaybackState(); 
+        }],
+        ['previoustrack', () => { 
+            hideOnboardingHints();
+            if(APP.currentIndex > 0) tuneToStation(APP.currentIndex - 1); 
+        }],
+        ['nexttrack',     () => { 
+            hideOnboardingHints();
+            const list = getCurrentTrackList();
+            if(APP.currentIndex < list.length - 1) tuneToStation(APP.currentIndex + 1);
+            else if (list.length > 0) tuneToStation(0); 
+        }],
+        ['stop',        () => { 
+            APP.isPlaying = false; 
+            if(APP.currentHowl) APP.currentHowl.stop(); 
+            updatePlaybackState(); 
+        }],
+        ['seekto',      (details) => {
+            if (APP.currentHowl && details.seekTime) {
+                APP.currentHowl.seek(details.seekTime);
+                updatePositionState();
+            }
+        }],
+        ['seekbackward', (details) => {
+            const skipTime = details.seekOffset || 10;
+            if (APP.currentHowl) {
+                const current = APP.currentHowl.seek();
+                APP.currentHowl.seek(Math.max(0, current - skipTime));
+                updatePositionState();
+            }
+        }],
+        ['seekforward', (details) => {
+            const skipTime = details.seekOffset || 10;
+            if (APP.currentHowl) {
+                const current = APP.currentHowl.seek();
+                APP.currentHowl.seek(current + skipTime);
+                updatePositionState();
+            }
+        }]
+    ];
+
+    for (const [action, handler] of actionHandlers) {
+        try {
+            navigator.mediaSession.setActionHandler(action, handler);
+        } catch (error) {
+            console.warn(`The media session action "${action}" is not supported yet.`);
+        }
+    }
+}
+
+function updateMediaSessionMetadata(track) {
+    if (!('mediaSession' in navigator) || !track) return;
+
+    const title = track.title || track.Title || 'Unknown Title';
+    const artist = track.artist || track.Artist || 'Zenith Companion';
+    const album = APP.currentBand === 'radio' ? 'Radio' : 
+                  (APP.currentBand.startsWith('playlist_') ? 'Custom Playlist' : 'Audiobook');
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+        title: title,
+        artist: artist,
+        album: album,
+        artwork: [
+            { src: 'icons/icon-96.png',   sizes: '96x96',   type: 'image/png' },
+            { src: 'icons/icon-128.png',  sizes: '128x128', type: 'image/png' },
+            { src: 'icons/icon-192.png',  sizes: '192x192', type: 'image/png' },
+            { src: 'icons/icon-512.png',  sizes: '512x512', type: 'image/png' }
+        ]
+    });
+    
+    updatePlaybackState();
+}
+
+function updatePlaybackState() {
+    if (!('mediaSession' in navigator)) return;
+    
+    navigator.mediaSession.playbackState = APP.isPlaying ? "playing" : "paused";
+    updatePositionState();
+}
+
+function updatePositionState() {
+    if (!('mediaSession' in navigator) || !APP.currentHowl || !APP.isPlaying) return;
+    
+    const duration = APP.currentHowl.duration();
+    const position = APP.currentHowl.seek();
+    
+    if (duration && !isNaN(duration) && !isNaN(position)) {
+        try {
+            navigator.mediaSession.setPositionState({
+                duration: duration,
+                playbackRate: 1.0,
+                position: position
+            });
+        } catch(e) {
+            console.warn("Error updating position state", e);
+        }
+    }
+}
+
+function startPositionUpdater() {
+    if (APP.positionTimer) clearInterval(APP.positionTimer);
+    APP.positionTimer = setInterval(() => {
+        if (APP.isPlaying) {
+            updatePositionState();
+        }
+    }, 1000); 
+}
+
+// =========================================================================
+// APP LOGIC
+// =========================================================================
+
+function getCurrentTrackList() {
+    if (APP.currentBand === 'radio') return APP.radioPlaylist;
+    return APP.playlist[APP.currentBand] || [];
 }
 
 function processRadioData() {
@@ -375,29 +571,21 @@ function registerServiceWorker() {
                 console.log('[App] Service Worker registered:', registration.scope);
                 APP.swReady = true;
                 
-                // Request cached URLs list
                 if (navigator.serviceWorker.controller) {
                     navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHED_URLS' });
                 }
                 
-                // Check for updates immediately and every 60 seconds
                 registration.update();
                 setInterval(() => registration.update(), 60000);
                 
-                // Handle updates - if there's a waiting worker, activate it
                 if (registration.waiting) {
-                    console.log('[App] New service worker waiting, activating...');
                     registration.waiting.postMessage({ type: 'SKIP_WAITING' });
                 }
                 
-                // Listen for new service workers
                 registration.addEventListener('updatefound', () => {
                     const newWorker = registration.installing;
-                    console.log('[App] New service worker installing...');
-                    
                     newWorker.addEventListener('statechange', () => {
                         if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                            console.log('[App] New service worker installed, activating...');
                             newWorker.postMessage({ type: 'SKIP_WAITING' });
                         }
                     });
@@ -407,17 +595,14 @@ function registerServiceWorker() {
                 console.warn('[App] Service Worker registration failed:', error);
             });
         
-        // Reload page when new service worker takes control
         let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
             if (!refreshing) {
                 refreshing = true;
-                console.log('[App] New service worker activated, reloading...');
                 window.location.reload();
             }
         });
         
-        // Listen for messages from service worker
         navigator.serviceWorker.addEventListener('message', (event) => {
             if (event.data.type === 'CACHED_URLS_LIST') {
                 APP.cachedUrls = new Set(event.data.urls);
@@ -440,29 +625,27 @@ function registerServiceWorker() {
                 APP.cachedUrls.clear();
                 updateOfflineIndicators();
             }
-            if (event.data.type === 'SW_UPDATED') {
-                console.log('[App] Service worker updated to version:', event.data.version);
-            }
         });
     }
 }
 
 function getTrackAudioUrl(track) {
     let srcAudio;
-    if (track.sourceType === 'radio' || track.ParentFolder) {
-        srcAudio = 'radio/' + cleanPath(track.src_audio);
+    const rawSrc = track.src_audio;
+    
+    if (track.sourceType === 'radio' || (track.ParentFolder && !track.sourceType)) {
+        srcAudio = 'radio/' + cleanPath(rawSrc);
     } else if (track.sourceType === 'book1') {
-        srcAudio = 'Book 1/' + cleanPath(track.src_audio).replace(/^book\s?1\//i, '');
+        srcAudio = 'Book 1/' + cleanPath(rawSrc).replace(/^book\s?1\//i, '');
     } else if (track.sourceType === 'book2') {
-        srcAudio = 'Book 2/' + cleanPath(track.src_audio).replace(/^book\s?2\//i, '');
-    } else if (track.src_audio) {
-        // Try to detect from src_audio path
-        if (track.src_audio.toLowerCase().includes('book 1') || track.src_audio.toLowerCase().includes('book1')) {
-            srcAudio = 'Book 1/' + cleanPath(track.src_audio).replace(/^book\s?1\//i, '');
-        } else if (track.src_audio.toLowerCase().includes('book 2') || track.src_audio.toLowerCase().includes('book2')) {
-            srcAudio = 'Book 2/' + cleanPath(track.src_audio).replace(/^book\s?2\//i, '');
+        srcAudio = 'Book 2/' + cleanPath(rawSrc).replace(/^book\s?2\//i, '');
+    } else if (rawSrc) {
+        if (rawSrc.toLowerCase().includes('book 1') || rawSrc.toLowerCase().includes('book1')) {
+            srcAudio = 'Book 1/' + cleanPath(rawSrc).replace(/^book\s?1\//i, '');
+        } else if (rawSrc.toLowerCase().includes('book 2') || rawSrc.toLowerCase().includes('book2')) {
+            srcAudio = 'Book 2/' + cleanPath(rawSrc).replace(/^book\s?2\//i, '');
         } else {
-            srcAudio = cleanPath(track.src_audio);
+            srcAudio = cleanPath(rawSrc);
         }
     }
     return srcAudio ? getSecureUrl(srcAudio) : null;
@@ -471,31 +654,25 @@ function getTrackAudioUrl(track) {
 function isTrackCached(track) {
     const url = getTrackAudioUrl(track);
     if (!url) return false;
-    
-    // Check both absolute and relative URLs
     const absoluteUrl = new URL(url, window.location.origin).href;
     return APP.cachedUrls.has(url) || APP.cachedUrls.has(absoluteUrl);
 }
 
 function cacheTrack(track, callback) {
     if (!APP.swReady || !navigator.serviceWorker.controller) {
-        console.warn('Service worker not ready');
         if (callback) callback(false);
         return;
     }
-    
     const url = getTrackAudioUrl(track);
     if (!url) {
         if (callback) callback(false);
         return;
     }
-    
     const absoluteUrl = new URL(url, window.location.origin).href;
     navigator.serviceWorker.controller.postMessage({
         type: 'CACHE_AUDIO',
         urls: [absoluteUrl]
     });
-    
     if (callback) callback(true);
 }
 
@@ -504,19 +681,16 @@ function uncacheTrack(track, callback) {
         if (callback) callback(false);
         return;
     }
-    
     const url = getTrackAudioUrl(track);
     if (!url) {
         if (callback) callback(false);
         return;
     }
-    
     const absoluteUrl = new URL(url, window.location.origin).href;
     navigator.serviceWorker.controller.postMessage({
         type: 'UNCACHE_AUDIO',
         url: absoluteUrl
     });
-    
     if (callback) callback(true);
 }
 
@@ -531,7 +705,12 @@ function cachePlaylistTracks(playlistId) {
     
     if (urls.length === 0) return;
     
-    APP.downloadProgress = { total: urls.length, completed: 0, playlistId };
+    APP.downloadProgress = { 
+        total: urls.length, 
+        completed: 0, 
+        id: playlistId,
+        type: 'playlist'
+    };
     
     navigator.serviceWorker.controller.postMessage({
         type: 'CACHE_AUDIO',
@@ -541,16 +720,68 @@ function cachePlaylistTracks(playlistId) {
     showDownloadProgress(playlist.name);
 }
 
+function cacheArtistTracks(artistName) {
+    if (!APP.swReady || !APP.radioData) return;
+
+    const tracks = APP.radioData.filter(t => t.ParentFolder === artistName);
+    const urls = tracks
+        .map(track => {
+             // Mimic getTrackAudioUrl logic specifically for radio tracks to be safe
+             // Since these come from APP.radioData, they are always Radio tracks
+             const rawSrc = track.src_audio;
+             const srcAudio = 'radio/' + cleanPath(rawSrc);
+             return getSecureUrl(srcAudio);
+        })
+        .filter(url => url)
+        .map(url => new URL(url, window.location.origin).href);
+
+    if (urls.length === 0) return;
+
+    APP.downloadProgress = {
+        total: urls.length,
+        completed: 0,
+        id: artistName,
+        type: 'artist',
+        tracks: tracks // Store reference to tracks for checking cache status later
+    };
+
+    navigator.serviceWorker.controller.postMessage({
+        type: 'CACHE_AUDIO',
+        urls: urls
+    });
+
+    showDownloadProgress("Artist: " + artistName.replace(/^\d+\s-\s/, ''));
+}
+
 function updateDownloadProgress() {
     if (!APP.downloadProgress) return;
     
-    const playlist = APP.userPlaylists.find(p => p.id === APP.downloadProgress.playlistId);
-    if (!playlist) return;
-    
     let cachedCount = 0;
-    playlist.tracks.forEach(track => {
-        if (isTrackCached(track)) cachedCount++;
-    });
+    
+    if (APP.downloadProgress.type === 'artist') {
+        const tracks = APP.downloadProgress.tracks;
+        if (tracks) {
+            tracks.forEach(track => {
+                // We need to construct the check similarly to getTrackAudioUrl
+                // But for radio items in radioData, we know the structure
+                const rawSrc = track.src_audio;
+                const srcAudio = 'radio/' + cleanPath(rawSrc);
+                const url = getSecureUrl(srcAudio);
+                if (url) {
+                    const absUrl = new URL(url, window.location.origin).href;
+                    if(APP.cachedUrls.has(url) || APP.cachedUrls.has(absUrl)) cachedCount++;
+                }
+            });
+        }
+    } else {
+        // Playlist
+        const playlist = APP.userPlaylists.find(p => p.id === APP.downloadProgress.id);
+        if (playlist) {
+            playlist.tracks.forEach(track => {
+                if (isTrackCached(track)) cachedCount++;
+            });
+        }
+    }
     
     APP.downloadProgress.completed = cachedCount;
     
@@ -570,7 +801,6 @@ function updateDownloadProgress() {
 
 function showDownloadProgress(playlistName) {
     hideDownloadProgress();
-    
     const progressDiv = document.createElement('div');
     progressDiv.className = 'download-progress-overlay';
     progressDiv.innerHTML = `
@@ -583,9 +813,7 @@ function showDownloadProgress(playlistName) {
             <button class="download-progress-close">Close</button>
         </div>
     `;
-    
     document.body.appendChild(progressDiv);
-    
     progressDiv.querySelector('.download-progress-close').addEventListener('click', hideDownloadProgress);
 }
 
@@ -596,22 +824,16 @@ function hideDownloadProgress() {
 }
 
 function updateOfflineIndicators() {
-    // Update any visible offline indicators in the UI
     document.querySelectorAll('[data-track-cached]').forEach(el => {
         const trackData = el.dataset.trackCached;
         if (trackData) {
             try {
                 const track = JSON.parse(trackData);
-                if (isTrackCached(track)) {
-                    el.classList.add('cached');
-                } else {
-                    el.classList.remove('cached');
-                }
+                if (isTrackCached(track)) el.classList.add('cached');
+                else el.classList.remove('cached');
             } catch (e) {}
         }
     });
-    
-    // Update download buttons
     document.querySelectorAll('.download-track-btn').forEach(btn => {
         const trackData = btn.dataset.track;
         if (trackData) {
@@ -627,6 +849,7 @@ function updateOfflineIndicators() {
             } catch (e) {}
         }
     });
+    // Update artist buttons if possible, but that's complex since it's partial status
 }
 
 function createStaticNoise() {
@@ -634,7 +857,6 @@ function createStaticNoise() {
         try { APP.staticNode.stop(); } catch(e){}
         APP.staticNode.disconnect();
     }
-
     const bufferSize = 2 * APP.audioContext.sampleRate;
     const noiseBuffer = APP.audioContext.createBuffer(1, bufferSize, APP.audioContext.sampleRate);
     const output = noiseBuffer.getChannelData(0);
@@ -729,11 +951,13 @@ function buildDial() {
             <div class="dial-track" id="dial-track"></div>
         `;
 
-        const playlist = APP.playlist[APP.currentBand];
-        $('dial-track').innerHTML = playlist ? playlist.map((item, index) => `
+        // Get the list. If it's a user playlist, we pull from APP.playlist with the custom ID
+        const playlist = getCurrentTrackList();
+        
+        $('dial-track').innerHTML = playlist && playlist.length ? playlist.map((item, index) => `
             <div class="station" data-index="${index}">
-                <div class="artist">${item.artist}</div>
-                <div class="title">${item.title}</div>
+                <div class="artist">${item.artist || item.Artist}</div>
+                <div class="title">${item.title || item.Title}</div>
             </div>
         `).join('') : '<div class="station" style="width:100%"><div class="title">No Signal</div></div>';
         
@@ -835,8 +1059,7 @@ function renderVirtualDial(currentX) {
         }
 
         const normalizedDist = dist / activeZone;
-        const maxRotation = 50;
-        const rawRotation = (xPos - centerOffset + itemWidth/2) / (container.offsetWidth/2) * maxRotation;
+        const rawRotation = (xPos - centerOffset + itemWidth/2) / (container.offsetWidth/2) * 50;
         const rotation = Math.max(-60, Math.min(60, rawRotation));
         const scale = 1.0 - (Math.pow(normalizedDist, 2) * 0.3); 
         
@@ -856,61 +1079,15 @@ function renderVirtualDial(currentX) {
 }
 
 function preloadNextTrack(currentIndex) {
-    // DISABLED: Preloading is disabled to fix band switching bug
-    // This function will be re-enabled once the core issue is resolved
-    console.log('[preloadNextTrack] DISABLED - skipping preload');
+    // Disabled logic preserved
     return;
-    
-    const list = (APP.currentBand === 'radio') ? APP.radioPlaylist : APP.playlist[APP.currentBand];
-    if (!list) return;
-    
-    const nextIndex = (currentIndex + 1) % list.length;
-
-    let srcAudio;
-    const track = list[nextIndex];
-    if (APP.currentBand === 'radio') {
-        srcAudio = 'radio/' + cleanPath(track.src_audio);
-    } else {
-        const folderName = (APP.currentBand === 'book1') ? 'Book 1' : 'Book 2';
-        const path = track.src_audio ? folderName + '/' + track.src_audio.replace(/^book\s?[12]\//i,'') : null;
-        srcAudio = cleanPath(path);
-    }
-
-    if (!srcAudio) return;
-    
-    const srcUrl = getSecureUrl(srcAudio);
-    
-    console.log('[preloadNextTrack] Preloading index:', nextIndex, 'band:', APP.currentBand, 'url:', srcUrl);
-
-    // Already preloading this exact track
-    if (APP.nextTrackSrc === srcUrl && APP.nextTrackHowl) {
-        console.log('[preloadNextTrack] Already preloading this track');
-        return;
-    }
-
-    if (APP.nextTrackHowl) {
-        console.log('[preloadNextTrack] Clearing old preload:', APP.nextTrackSrc);
-        APP.nextTrackHowl.unload();
-    }
-
-    APP.nextTrackSrc = srcUrl;
-    APP.nextTrackHowl = new Howl({
-        src: [srcUrl],
-        format: ['mp3'], html5: true,
-        preload: true,
-        autoplay: false,
-        onloaderror: function() {
-            console.warn("[preloadNextTrack] Failed to preload next track");
-            APP.nextTrackSrc = null;
-        }
-    });
 }
 
 function setupSingleDraggable() {
     const track = $('dial-track');
     if(!track) return;
     const container = track.parentElement;
-    const list = APP.playlist[APP.currentBand];
+    const list = getCurrentTrackList();
     
     setupGenericDraggable(track, container, list, (idx) => {
          APP.currentIndex = idx;
@@ -992,17 +1169,14 @@ function setupDualDraggables() {
         bounds: { minX: minX, maxX: maxX },
         inertia: false, 
         edgeResistance: 0.7,
-        
         onPress: function() {
             hideOnboardingHints();
             gsap.killTweensOf(amProxy);
             APP.isTransitioning = false;
             APP.isDragging = true;
-            
             lastX = this.x;
             lastTime = Date.now();
             velocity = 0;
-
             const trackVelocity = () => {
                 const now = Date.now();
                 const dt = now - lastTime;
@@ -1016,11 +1190,7 @@ function setupDualDraggables() {
             };
             trackVelocity();
         },
-
-        onDrag: function() { 
-            handleVirtualDrag(this.x); 
-        },
-
+        onDrag: function() { handleVirtualDrag(this.x); },
         onDragEnd: function() { 
             cancelAnimationFrame(trackerId);
             APP.isDragging = false;
@@ -1064,17 +1234,14 @@ function setupGenericDraggable(track, container, dataList, onDragCallback, onEnd
         bounds: { minX: minX, maxX: maxX },
         edgeResistance: 0.7,
         inertia: false,
-        
         onPress: function() {
             hideOnboardingHints();
             gsap.killTweensOf(track);
             APP.isTransitioning = false;
             APP.isDragging = true;
-            
             lastX = this.x;
             lastTime = Date.now();
             velocity = 0;
-            
             const trackVelocity = () => {
                 const now = Date.now();
                 const dt = now - lastTime;
@@ -1088,7 +1255,6 @@ function setupGenericDraggable(track, container, dataList, onDragCallback, onEnd
             };
             trackVelocity();
         },
-
         onDrag: function() {
             APP.isDragging = true;
             updateActiveStations(track);
@@ -1098,7 +1264,6 @@ function setupGenericDraggable(track, container, dataList, onDragCallback, onEnd
             currentIndex = Math.max(0, Math.min(currentIndex, dataList.length - 1));
             if (onDragCallback) onDragCallback(currentIndex);
         },
-
         onDragEnd: function() {
             cancelAnimationFrame(trackerId);
             APP.isDragging = false;
@@ -1223,29 +1388,37 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     APP.pendingIndex = index;
 
     let track, srcAudio, srcVideo, isVideo;
-    const list = (APP.currentBand === 'radio') ? APP.radioPlaylist : APP.playlist[APP.currentBand];
-    
-    console.log('[loadTrack] Called with index:', index, 'currentBand:', APP.currentBand, 'list length:', list?.length);
+    const list = getCurrentTrackList();
     
     if (!list || !list[index]) return;
 
     track = list[index];
     
-    console.log('[loadTrack] Track:', track?.Title || track?.title, 'Artist:', track?.Artist || track?.artist);
+    console.log('[loadTrack] Playing:', track.Title || track.title);
+
+    // Update Media Session Metadata
+    updateMediaSessionMetadata(track);
 
     if (APP.currentBand === 'radio') {
         srcAudio = 'radio/' + cleanPath(track.src_audio);
         srcVideo = null; isVideo = false;
     } else {
-        const folderName = (APP.currentBand === 'book1') ? 'Book 1' : 'Book 2';
-        const ensureFolderPath = (path) => path ? folderName + '/' + path.replace(/^book\s?[12]\//i,'') : path;
-        srcAudio = ensureFolderPath(cleanPath(track.src_audio));
-        srcVideo = ensureFolderPath(cleanPath(track.src_video));
+        // Book 1, Book 2, or Custom Playlist
+        const folderName = (APP.currentBand === 'book1') ? 'Book 1' : 
+                           (APP.currentBand === 'book2') ? 'Book 2' : '';
+        
+        let rawSrc = track.src_audio;
+        // Fix pathing if it's from a playlist but needs Book folder context
+        if (track.sourceType === 'book1') rawSrc = 'Book 1/' + cleanPath(rawSrc).replace(/^book\s?1\//i,'');
+        else if (track.sourceType === 'book2') rawSrc = 'Book 2/' + cleanPath(rawSrc).replace(/^book\s?2\//i,'');
+        else if (track.src_audio && !folderName) rawSrc = cleanPath(track.src_audio);
+        else rawSrc = folderName ? folderName + '/' + track.src_audio.replace(/^book\s?[12]\//i,'') : track.src_audio;
+
+        srcAudio = cleanPath(rawSrc);
+        srcVideo = track.src_video ? cleanPath(track.src_video) : null;
         isVideo = (srcVideo && /\.(mp4|mkv|webm)$/i.test(srcVideo));
     }
     
-    console.log('[loadTrack] srcAudio:', srcAudio);
-
     if (srcAudio === APP.currentTrackSrc && !isVideo) {
         if (updateLayout) updateInterfaceLayout(false);
         return;
@@ -1254,7 +1427,7 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     APP.currentTrackSrc = srcAudio;
     const excerptDisplay = $('excerpt-display');
     
-    if (APP.currentBand !== 'radio' && excerptDisplay) {
+    if (APP.currentBand !== 'radio' && excerptDisplay && track.excerpt) {
         excerptDisplay.innerHTML = `<span class="page-ref">Page ${track.page}</span><p>${track.excerpt}</p>`;
         excerptDisplay.scrollTop = 0;
         if(!isVideo) excerptDisplay.classList.remove('fade-out');
@@ -1269,7 +1442,10 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
         videoPlayer.load();
         videoPlayer.muted = false;
         videoPlayer.volume = APP.volume;
-        if (APP.isPlaying) videoPlayer.play().catch(()=>{});
+        if (APP.isPlaying) {
+             videoPlayer.play().catch(()=>{});
+             updatePlaybackState(); // Update MediaSession
+        }
         return;
     } else if (videoPlayer) {
         videoPlayer.pause();
@@ -1280,24 +1456,23 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     let newHowl;
     const targetUrl = getSecureUrl(srcAudio);
     
-    console.log('[loadTrack] targetUrl:', targetUrl);
-    console.log('[loadTrack] currentBand:', APP.currentBand);
-    
-    // DISABLED: Preload reuse is disabled to fix band switching bug
-    // Always create a fresh Howl to ensure correct track plays
-    // Clear any stale preload
     if (APP.nextTrackHowl) {
-        console.log('[loadTrack] Clearing stale preload:', APP.nextTrackSrc);
         APP.nextTrackHowl.unload();
         APP.nextTrackHowl = null;
         APP.nextTrackSrc = null;
     }
     
-    console.log("[loadTrack] Creating new Howl for:", targetUrl);
     newHowl = new Howl({
         src: [targetUrl],
         format: ['mp3'], html5: true,
         onend: handleAutoplay,
+        onplay: () => { 
+            APP.isPlaying = true; 
+            updatePlaybackState(); 
+            startPositionUpdater(); // START UPDATING POSITION
+        },
+        onpause: () => { APP.isPlaying = false; updatePlaybackState(); },
+        onstop: () => { APP.isPlaying = false; updatePlaybackState(); },
         onload: function() {
             if (APP.currentHowl !== this) { this.unload(); return; }
         }
@@ -1319,6 +1494,7 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     if (APP.isPlaying) {
         APP.currentHowl.play();
         APP.currentHowl.fade(0, APP.volume, 500);
+        updatePlaybackState(); // Update MediaSession
     }
 
     if (APP.currentHowl._sounds.length > 0 && APP.currentHowl._sounds[0]._node && APP.audioContext) {
@@ -1329,24 +1505,22 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     }
 
     preloadNextTrack(index);
-    
-    // Clear the band switch flag after we've loaded a track and started preloading
-    // This allows preloading to work for subsequent tracks within the same band
     APP.recentBandSwitch = false;
 }
 
 function handleAutoplay() {
     const nextIndex = APP.currentIndex + 1;
-    const max = APP.currentBand === 'radio' ? APP.radioPlaylist.length : APP.playlist[APP.currentBand].length;
+    const list = getCurrentTrackList();
+    const max = list.length;
+    
     if (nextIndex < max) tuneToStation(nextIndex);
+    else if (max > 0) tuneToStation(0); // Loop back
 }
 
 function tuneToStation(index) {
     console.log('[tuneToStation] index:', index, 'currentBand:', APP.currentBand);
     
-    // Cancel pending band switch load since we're tuning to a specific station
     if (APP.bandSwitchTimer) {
-        console.log('[tuneToStation] Cancelling bandSwitchTimer');
         clearTimeout(APP.bandSwitchTimer);
         APP.bandSwitchTimer = null;
     }
@@ -1354,14 +1528,14 @@ function tuneToStation(index) {
     if (APP.currentBand === 'radio') {
         const fmTrack = $('fm-track');
         const song = APP.radioPlaylist[index];
-        console.log('[tuneToStation] Radio song:', song?.Title, 'Artist:', song?.Artist);
         let artistIdx = 0;
         if (song) artistIdx = APP.radioArtists.findIndex(a => a.folder === song.ParentFolder);
         snapVirtualTo(index, false, null, true);
         if (artistIdx !== -1) snapToPosition(fmTrack, fmTrack.parentElement, artistIdx, false, null, true);
     } else {
         const track = $('dial-track');
-        snapToPosition(track, track.parentElement, index, false, null, true);
+        if (track) snapToPosition(track, track.parentElement, index, false, null, true);
+        else loadTrack(index, true, true); // Fallback if dial not rendered yet
     }
 }
 
@@ -1409,9 +1583,9 @@ function updateInterfaceLayout(isVideo) {
 
 function updateArrowButtons() {
     const left = $('left-arrow'), right = $('right-arrow');
-    let max = 0;
-    if(APP.currentBand === 'radio') max = APP.radioPlaylist.length;
-    else if(APP.playlist && APP.playlist[APP.currentBand]) max = APP.playlist[APP.currentBand].length;
+    const list = getCurrentTrackList();
+    const max = list.length;
+    
     left.style.opacity = APP.currentIndex === 0 ? '0.3' : '1';
     right.style.opacity = APP.currentIndex === max - 1 ? '0.3' : '1';
 }
@@ -1432,10 +1606,12 @@ function setupControls() {
 
         if (val === 0 && APP.isPlaying) {
             APP.isPlaying = false;
+            updatePlaybackState();
             if(APP.currentHowl) APP.currentHowl.pause();
             if(vid) vid.pause();
         } else if (val > 0 && !APP.isPlaying) {
             APP.isPlaying = true;
+            updatePlaybackState();
             if(APP.audioContext.state === 'suspended') APP.audioContext.resume();
             if(APP.currentHowl) APP.currentHowl.play();
             if(vid) vid.play().catch(()=>{});
@@ -1470,17 +1646,16 @@ function setupControls() {
         if(APP.gainNode) APP.gainNode.gain.value = newVol;
         const vid = $('video-player');
         if(vid) vid.volume = newVol;
-
+        
+        // Update state based on volume
         if (newVol === 0 && APP.isPlaying) {
             APP.isPlaying = false;
-            if(APP.currentHowl) APP.currentHowl.pause();
-            if(vid) vid.pause();
+            updatePlaybackState();
         } else if (newVol > 0 && !APP.isPlaying) {
             APP.isPlaying = true;
-            if(APP.audioContext.state === 'suspended') APP.audioContext.resume();
-            if(APP.currentHowl) APP.currentHowl.play();
-            if(vid) vid.play().catch(()=>{});
+            updatePlaybackState();
         }
+
     }, { passive: false });
 
     volGroup.addEventListener('touchend', (e) => {
@@ -1507,26 +1682,17 @@ function setupControls() {
             e.target.classList.add('active');
             APP.currentBand = newBand;
             APP.currentIndex = 0;
-            
-            // Mark that we recently switched bands - prevents using stale preloads
             APP.recentBandSwitch = true;
             
-            // Clear preloaded track from previous band
             if (APP.nextTrackHowl) {
-                console.log('[Band Switch] Clearing preload, was:', APP.nextTrackSrc);
                 APP.nextTrackHowl.unload();
                 APP.nextTrackHowl = null;
             }
             APP.nextTrackSrc = null;
-            
-            // Cancel any pending band switch load
-            if (APP.bandSwitchTimer) {
-                clearTimeout(APP.bandSwitchTimer);
-            }
+            if (APP.bandSwitchTimer) clearTimeout(APP.bandSwitchTimer);
             
             buildDial();
             APP.bandSwitchTimer = setTimeout(() => {
-                console.log('[Band Switch] Timer fired, calling loadTrack(0)');
                 APP.bandSwitchTimer = null;
                 loadTrack(0);
             }, 100);
@@ -1535,26 +1701,14 @@ function setupControls() {
 
     $('left-arrow').addEventListener('click', () => { 
         hideOnboardingHints();
-        console.log('[Tune Left] currentBand:', APP.currentBand, 'currentIndex:', APP.currentIndex);
-        // Cancel pending band switch load since user is manually tuning
-        if (APP.bandSwitchTimer) {
-            console.log('[Tune Left] Cancelling bandSwitchTimer');
-            clearTimeout(APP.bandSwitchTimer);
-            APP.bandSwitchTimer = null;
-        }
+        if (APP.bandSwitchTimer) { clearTimeout(APP.bandSwitchTimer); APP.bandSwitchTimer = null; }
         if(APP.currentIndex > 0) tuneToStation(APP.currentIndex - 1); 
     });
     $('right-arrow').addEventListener('click', () => { 
         hideOnboardingHints();
-        console.log('[Tune Right] currentBand:', APP.currentBand, 'currentIndex:', APP.currentIndex);
-        // Cancel pending band switch load since user is manually tuning
-        if (APP.bandSwitchTimer) {
-            console.log('[Tune Right] Cancelling bandSwitchTimer');
-            clearTimeout(APP.bandSwitchTimer);
-            APP.bandSwitchTimer = null;
-        }
-        const max = APP.currentBand === 'radio' ? APP.radioPlaylist.length : APP.playlist[APP.currentBand].length;
-        if(APP.currentIndex < max - 1) tuneToStation(APP.currentIndex + 1); 
+        if (APP.bandSwitchTimer) { clearTimeout(APP.bandSwitchTimer); APP.bandSwitchTimer = null; }
+        const list = getCurrentTrackList();
+        if(APP.currentIndex < list.length - 1) tuneToStation(APP.currentIndex + 1); 
     });
 
     $('guide-btn').addEventListener('click', openProgramGuide);
@@ -1590,9 +1744,17 @@ function setupControls() {
 }
 
 function openProgramGuide() {
-    if(APP.currentBand !== 'radio') {
+    if (APP.currentBand === 'book1' || APP.currentBand === 'book2') {
         renderBookList();
+    } else if (APP.currentBand.startsWith('playlist_')) {
+        // Find which playlist we are in
+        const pid = APP.currentBand.replace('playlist_', '');
+        renderPlaylistTracks(pid);
+        // Force tab to playlists
+        qsa('.tab-btn').forEach(b => b.classList.remove('active'));
+        qs('.tab-btn[data-view="playlists"]').classList.add('active');
     } else {
+        // Radio logic
         if (APP.radioState.viewMode === 'artists') renderArtistList();
         else if (APP.radioState.viewMode === 'genres') renderGenreList();
         else if (APP.radioState.viewMode === 'playlists') renderPlaylistList();
@@ -1630,46 +1792,17 @@ function renderBookList() {
             closeProgramGuide();
         });
     });
-
-    content.querySelectorAll('.add-to-playlist-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const trackIndex = parseInt(btn.dataset.trackIndex);
-            const track = {...list[trackIndex], sourceType: APP.currentBand};
-            showPlaylistPopover(track, btn);
-        });
-    });
-
-    content.querySelectorAll('.download-track-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const track = JSON.parse(btn.dataset.track.replace(/&quot;/g, '"'));
-            if (isTrackCached(track)) {
-                if (confirm('Remove this track from offline storage?')) {
-                    uncacheTrack(track);
-                    btn.classList.remove('downloaded');
-                }
-            } else {
-                cacheTrack(track);
-                btn.classList.add('downloading');
-                setTimeout(() => btn.classList.remove('downloading'), 2000);
-            }
-        });
-    });
-
+    
+    bindListButtonEvents(content, list);
     updateOfflineIndicators();
-
     setTimeout(() => {
         const activeItem = content.querySelector('.active-track');
-        if (activeItem) {
-            activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+        if (activeItem) activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 100);
 }
 
 function renderTrackList() {
     const content = $('program-guide-content');
-    
     content.innerHTML = APP.radioPlaylist.map((track, index) => {
         const artist = track.artist || track.Artist;
         const title = track.title || track.Title;
@@ -1697,11 +1830,22 @@ function renderTrackList() {
         });
     });
 
+    bindListButtonEvents(content, APP.radioPlaylist);
+    updateOfflineIndicators();
+    setTimeout(() => {
+        const activeItem = content.querySelector('.active-track');
+        if (activeItem) activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+}
+
+function bindListButtonEvents(content, list) {
     content.querySelectorAll('.add-to-playlist-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const trackIndex = parseInt(btn.dataset.trackIndex);
-            const track = {...APP.radioPlaylist[trackIndex], sourceType: 'radio'};
+            // Ensure we have correct source context
+            const track = {...list[trackIndex]};
+            if(!track.sourceType) track.sourceType = APP.currentBand;
             showPlaylistPopover(track, btn);
         });
     });
@@ -1722,15 +1866,6 @@ function renderTrackList() {
             }
         });
     });
-
-    updateOfflineIndicators();
-
-    setTimeout(() => {
-        const activeItem = content.querySelector('.active-track');
-        if (activeItem) {
-            activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-    }, 100);
 }
 
 function renderArtistList() {
@@ -1744,12 +1879,21 @@ function renderArtistList() {
     const sortedArtists = Object.keys(artists).sort();
     content.innerHTML = sortedArtists.map(artist => `
         <div class="filter-item ${APP.radioState.activeArtistFilter === artist ? 'active-filter' : ''}" data-artist="${artist}">
-            <div class="name">${artist.replace(/^\d+\s-\s/, '')}</div>
-            <div class="count">${artists[artist]}</div>
+            <div class="artist-list-item-content">
+                <div class="name">${artist.replace(/^\d+\s-\s/, '')}</div>
+                <div class="artist-actions">
+                    <button class="download-artist-btn" title="Download entire artist" data-artist-folder="${artist}">?</button>
+                    <div class="count">${artists[artist]}</div>
+                </div>
+            </div>
         </div>
     `).join('');
+
+    // Attach listeners
     content.querySelectorAll('.filter-item').forEach(item => {
-        item.addEventListener('click', () => {
+        // Main item click (filtering)
+        item.addEventListener('click', (e) => {
+            if (e.target.classList.contains('download-artist-btn')) return;
             APP.radioState.activeArtistFilter = item.dataset.artist;
             APP.radioState.activeGenre = null; 
             APP.radioState.viewMode = 'tracks';
@@ -1759,6 +1903,15 @@ function renderArtistList() {
             buildDial();
             loadTrack(0);
             closeProgramGuide();
+        });
+    });
+
+    // Download button listeners
+    content.querySelectorAll('.download-artist-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const artistFolder = btn.dataset.artistFolder;
+            cacheArtistTracks(artistFolder);
         });
     });
 }
@@ -1874,10 +2027,18 @@ function renderPlaylistTracks(playlistId) {
     const cachedCount = playlist.tracks.filter(t => isTrackCached(t)).length;
     const allCached = cachedCount === playlist.tracks.length && playlist.tracks.length > 0;
     
+    // Check if this playlist is currently active/playing
+    const isPlayingThis = (APP.currentBand === 'playlist_' + playlistId);
+    
     let html = `<div class="playlist-header-bar">
         <button class="back-to-playlists-btn">? Back</button>
         <div class="playlist-title">${playlist.name}</div>
-        ${playlist.tracks.length > 0 ? `<button class="download-all-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${playlistId}" title="${allCached ? 'All downloaded' : 'Download all'}">? All</button>` : ''}
+        <div style="display:flex; gap:10px;">
+             ${playlist.tracks.length > 0 ? `<button class="download-all-btn play-playlist-btn ${isPlayingThis ? 'playing-mode' : ''}" data-playlist-id="${playlistId}" title="Play Playlist">
+                ${isPlayingThis ? 'Playing' : '? Play'}
+             </button>` : ''}
+             ${playlist.tracks.length > 0 ? `<button class="download-all-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${playlistId}" title="${allCached ? 'All downloaded' : 'Download all'}">? All</button>` : ''}
+        </div>
     </div>`;
     
     if (playlist.tracks.length === 0) {
@@ -1888,8 +2049,12 @@ function renderPlaylistTracks(playlistId) {
             const title = track.title || track.Title;
             const isCached = isTrackCached(track);
             const trackJson = JSON.stringify(track).replace(/"/g, '&quot;');
+            
+            // Highlight active track if playing this playlist
+            const isActive = isPlayingThis && (APP.currentIndex === index);
+            
             return `
-            <div class="program-item playlist-track-item" data-track-index="${index}" data-playlist-id="${playlistId}">
+            <div class="program-item playlist-track-item ${isActive ? 'active-track' : ''}" data-track-index="${index}" data-playlist-id="${playlistId}">
                 <div class="program-item-main">
                     <div class="artist">${artist}</div>
                     <div class="title">${title}</div>
@@ -1908,7 +2073,30 @@ function renderPlaylistTracks(playlistId) {
         renderPlaylistList();
     });
     
-    const downloadAllBtn = content.querySelector('.download-all-btn');
+    const playBtn = content.querySelector('.play-playlist-btn');
+    if (playBtn) {
+        playBtn.addEventListener('click', (e) => {
+             e.stopPropagation();
+             // Switch context to this playlist!
+             const pid = btn.dataset.playlistId || playlistId;
+             console.log('[Playlist] Switching to playlist mode:', pid);
+             
+             // Unload current state
+             qsa('.band-btn').forEach(b => b.classList.remove('active')); // Deselect piano keys
+             
+             // Register this playlist in APP.playlist so buildDial finds it
+             const bandKey = 'playlist_' + pid;
+             APP.playlist[bandKey] = playlist.tracks;
+             APP.currentBand = bandKey;
+             
+             APP.currentIndex = 0;
+             buildDial();
+             loadTrack(0);
+             closeProgramGuide();
+        });
+    }
+
+    const downloadAllBtn = content.querySelector('.download-all-btn:not(.play-playlist-btn)');
     if (downloadAllBtn) {
         downloadAllBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1920,67 +2108,27 @@ function renderPlaylistTracks(playlistId) {
         item.addEventListener('click', () => {
             const trackItem = item.closest('.playlist-track-item');
             const trackIndex = parseInt(trackItem.dataset.trackIndex);
-            const track = playlist.tracks[trackIndex];
             
-            // First try to find in current radio playlist
-            let foundIndex = APP.radioPlaylist.findIndex(t => 
-                (t.src_audio || t.Title + t.Artist) === (track.src_audio || track.Title + track.Artist)
-            );
+            // NEW BEHAVIOR: 
+            // If we are already in this playlist mode, just tune.
+            // If not, switch mode to this playlist and play.
+            const bandKey = 'playlist_' + playlistId;
             
-            if (foundIndex !== -1 && APP.currentBand === 'radio') {
+            if (APP.currentBand === bandKey) {
                 hideOnboardingHints();
-                tuneToStation(foundIndex);
+                tuneToStation(trackIndex);
                 closeProgramGuide();
-                return;
-            }
-            
-            // Check if it's from a book
-            if (track.sourceType === 'book1' || track.sourceType === 'book2') {
-                const bookPlaylist = APP.playlist[track.sourceType];
-                if (bookPlaylist) {
-                    foundIndex = bookPlaylist.findIndex(t => 
-                        (t.src_audio || t.title + t.artist) === (track.src_audio || track.title + track.artist)
-                    );
-                    if (foundIndex !== -1) {
-                        // Switch to the correct band
-                        APP.currentBand = track.sourceType;
-                        qsa('.band-btn').forEach(b => b.classList.remove('active'));
-                        const bandBtn = qs(`.band-btn[data-band="${track.sourceType}"]`);
-                        if (bandBtn) bandBtn.classList.add('active');
-                        buildDial();
-                        hideOnboardingHints();
-                        setTimeout(() => tuneToStation(foundIndex), 100);
-                        closeProgramGuide();
-                        return;
-                    }
-                }
-            }
-            
-            // Try radio as fallback
-            foundIndex = APP.radioData ? APP.radioData.findIndex(t => 
-                (t.src_audio || t.Title + t.Artist) === (track.src_audio || track.Title + track.Artist)
-            ) : -1;
-            
-            if (foundIndex !== -1) {
-                APP.currentBand = 'radio';
+            } else {
+                // Switch to playlist mode
                 qsa('.band-btn').forEach(b => b.classList.remove('active'));
-                const bandBtn = qs('.band-btn[data-band="radio"]');
-                if (bandBtn) bandBtn.classList.add('active');
-                APP.radioState.activeArtistFilter = null;
-                APP.radioState.activeGenre = null;
-                processRadioData();
+                
+                APP.playlist[bandKey] = playlist.tracks;
+                APP.currentBand = bandKey;
+                
+                APP.currentIndex = trackIndex;
                 buildDial();
-                
-                // Find the index in the processed playlist
-                const processedIndex = APP.radioPlaylist.findIndex(t => 
-                    (t.src_audio || t.Title + t.Artist) === (track.src_audio || track.Title + track.Artist)
-                );
-                
-                if (processedIndex !== -1) {
-                    hideOnboardingHints();
-                    setTimeout(() => tuneToStation(processedIndex), 100);
-                    closeProgramGuide();
-                }
+                loadTrack(trackIndex);
+                closeProgramGuide();
             }
         });
     });
@@ -2007,6 +2155,11 @@ function renderPlaylistTracks(playlistId) {
             e.stopPropagation();
             const trackIndex = parseInt(btn.dataset.trackIndex);
             removeTrackFromPlaylist(playlistId, trackIndex);
+            // Update the live playlist if playing
+            if (APP.currentBand === 'playlist_' + playlistId) {
+                 APP.playlist[APP.currentBand] = playlist.tracks; // Refresh ref
+                 // If we removed the currently playing track, weirdness happens, but handled for now by standard refresh
+            }
             renderPlaylistTracks(playlistId);
         });
     });
