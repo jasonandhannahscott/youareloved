@@ -1,6 +1,6 @@
-// ZENITH APP.JS - VERSION 4.4 - PWA INSTALL BUTTON ON HOME SCREEN
-// If you don't see "VERSION 4.4" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 4.4 LOADED ===');
+// ZENITH APP.JS - VERSION 4.5 - MOBILE PROGRESS BAR FIX
+// If you don't see "VERSION 4.5" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 4.5 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
@@ -448,12 +448,19 @@ function updatePositionState() {
     const duration = APP.currentHowl.duration();
     const position = APP.currentHowl.seek();
     
-    if (duration && !isNaN(duration) && !isNaN(position)) {
+    // Validate: duration must be a finite positive number, position must be valid and less than duration
+    // On mobile HTML5 audio, duration can be Infinity or 0 before metadata loads
+    if (duration && 
+        isFinite(duration) && 
+        duration > 0 && 
+        !isNaN(position) && 
+        position >= 0 && 
+        position <= duration) {
         try {
             navigator.mediaSession.setPositionState({
                 duration: duration,
                 playbackRate: 1.0,
-                position: position
+                position: Math.min(position, duration) // Ensure position never exceeds duration
             });
         } catch(e) {
             console.warn("Error updating position state", e);
@@ -1576,6 +1583,10 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
         onstop: () => { APP.isPlaying = false; updatePlaybackState(); },
         onload: function() {
             if (APP.currentHowl !== this) { this.unload(); return; }
+            // Audio metadata is now loaded - update position state with valid duration
+            if (APP.isPlaying) {
+                updatePositionState();
+            }
         }
     });
 
