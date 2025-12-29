@@ -1,6 +1,6 @@
-// ZENITH APP.JS - VERSION 4.5 - MOBILE PROGRESS BAR FIX
-// If you don't see "VERSION 4.5" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 4.5 LOADED ===');
+// ZENITH APP.JS - VERSION 4.7 - REDESIGNED TRACK CARDS
+// If you don't see "VERSION 4.7" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 4.7 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
@@ -59,48 +59,120 @@ const APP = {
 function injectCustomStyles() {
     const style = document.createElement('style');
     style.textContent = `
-        /* High Contrast Action Buttons */
-        .download-track-btn, .add-to-playlist-btn, .download-artist-btn, .remove-from-playlist-btn {
-            background: rgba(255, 255, 255, 0.15);
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            color: #fff;
-            border-radius: 4px;
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            transition: all 0.2s;
-            cursor: pointer;
-            margin-left: 5px;
-            font-size: 1.1em;
+        /* ========================================
+           PROGRAM ITEM CARDS - COMPLETE OVERRIDE
+           ======================================== */
+        
+        /* Remove the old ::after NOW PLAYING indicator */
+        .program-item.active-track::after {
+            display: none !important;
         }
-        .download-track-btn:hover, .add-to-playlist-btn:hover, .download-artist-btn:hover, .remove-from-playlist-btn:hover {
-            background: #fff;
-            color: #000;
-            border-color: #fff;
-            box-shadow: 0 0 8px rgba(255,255,255,0.6);
-            transform: scale(1.05);
+        
+        /* Base card layout - horizontal flex */
+        .program-item {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: flex-start !important;
+            justify-content: space-between !important;
+            padding: 12px 15px !important;
+            gap: 12px !important;
         }
+        
+        /* Song info section - left side */
+        .program-item-main {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 2px !important;
+        }
+        
+        .program-item-main .artist {
+            font-size: 1.1rem !important;
+            font-weight: 600 !important;
+            color: var(--dark-walnut) !important;
+            line-height: 1.2 !important;
+        }
+        
+        .program-item-main .title {
+            font-size: 0.95rem !important;
+            font-weight: 400 !important;
+            color: #555 !important;
+            line-height: 1.3 !important;
+        }
+        
+        /* Actions section - right side, stacked buttons */
         .program-item-actions {
-            gap: 8px;
-            display: flex;
-            align-items: center;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-end !important;
+            gap: 5px !important;
+            flex-shrink: 0 !important;
         }
-        .downloaded {
-            color: #4CAF50 !important;
-            border-color: #4CAF50 !important;
-            background: rgba(76, 175, 80, 0.1) !important;
+        
+        /* All action buttons - clean text style */
+        .program-item-actions button,
+        .program-item-actions .now-playing-indicator {
+            background: transparent !important;
+            border: 1px solid rgba(0,0,0,0.2) !important;
+            border-radius: 3px !important;
+            padding: 4px 10px !important;
+            font-size: 0.65rem !important;
+            font-weight: 600 !important;
+            font-family: 'Oswald', sans-serif !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.5px !important;
+            cursor: pointer !important;
+            color: #666 !important;
+            white-space: nowrap !important;
+            width: auto !important;
+            height: auto !important;
+            line-height: 1.2 !important;
+            transition: all 0.15s ease !important;
         }
-        .downloading {
-            animation: pulse-download 1.5s infinite;
+        
+        .program-item-actions button:hover {
+            background: var(--brass-gold) !important;
+            border-color: var(--brass-gold) !important;
+            color: #fff !important;
         }
-        @keyframes pulse-download {
-            0% { border-color: #fff; }
-            50% { border-color: #4CAF50; background: rgba(76, 175, 80, 0.2); }
-            100% { border-color: #fff; }
+        
+        /* Now Playing indicator - special styling */
+        .now-playing-indicator {
+            background: var(--needle-red) !important;
+            border-color: var(--needle-red) !important;
+            color: #fff !important;
+            cursor: default !important;
+            font-weight: 700 !important;
         }
+        
+        /* Downloaded state */
+        .program-item-actions button.downloaded {
+            color: #2e7d32 !important;
+            border-color: #2e7d32 !important;
+            background: rgba(46, 125, 50, 0.08) !important;
+        }
+        
+        /* Remove button - red hover */
+        .remove-from-playlist-btn:hover {
+            background: #c41e3a !important;
+            border-color: #c41e3a !important;
+            color: #fff !important;
+        }
+        
+        /* Active track highlight */
+        .program-item.active-track {
+            background: rgba(212, 175, 55, 0.15) !important;
+            border-left: 4px solid var(--brass-gold) !important;
+        }
+        
+        .program-item.active-track .artist {
+            color: #000 !important;
+        }
+        
+        /* ========================================
+           ARTIST LIST ITEMS
+           ======================================== */
         .artist-list-item-content {
             display: flex;
             justify-content: space-between;
@@ -113,38 +185,78 @@ function injectCustomStyles() {
             gap: 10px;
         }
         .download-artist-btn {
-            width: 32px;
-            height: 32px;
-            font-size: 0.9em;
+            background: transparent !important;
+            border: 1px solid rgba(0,0,0,0.2) !important;
+            border-radius: 3px !important;
+            padding: 4px 10px !important;
+            font-size: 0.65rem !important;
+            font-weight: 600 !important;
+            font-family: 'Oswald', sans-serif !important;
+            text-transform: uppercase !important;
+            color: #666 !important;
+            cursor: pointer !important;
+            width: auto !important;
+            height: auto !important;
+        }
+        .download-artist-btn:hover {
+            background: var(--brass-gold) !important;
+            border-color: var(--brass-gold) !important;
+            color: #fff !important;
         }
         
-        /* PWA Install Button - Floating on Home Screen */
+        /* ========================================
+           SHUFFLE BUTTON PULSE
+           ======================================== */
+        .shuffle-btn-icon.active {
+            animation: shuffle-pulse 2s ease-in-out infinite;
+        }
+        .shuffle-btn-icon.active .shuffle-mask {
+            animation: shuffle-glow 2s ease-in-out infinite;
+        }
+        @keyframes shuffle-pulse {
+            0%, 100% { 
+                transform: scale(1);
+                border-color: var(--brass-gold);
+            }
+            50% { 
+                transform: scale(1.08);
+                border-color: var(--needle-red);
+            }
+        }
+        @keyframes shuffle-glow {
+            0%, 100% { 
+                box-shadow: 0 0 6px var(--needle-red);
+            }
+            50% { 
+                box-shadow: 0 0 14px var(--needle-red);
+            }
+        }
+        
+        /* ========================================
+           PWA INSTALL BUTTON
+           ======================================== */
         .install-pwa-btn {
-            display: none; /* Hidden by default */
+            display: none;
             position: fixed;
             bottom: 30px;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 9999; /* Top of everything */
-            
+            z-index: 9999;
             width: auto;
             min-width: 200px;
             padding: 12px 24px;
-            
             background: #4CAF50;
             color: white;
             border: none;
             border-radius: 50px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            
             font-family: inherit;
             font-weight: bold;
             font-size: 1rem;
             text-transform: uppercase;
             letter-spacing: 1px;
             cursor: pointer;
-            
-            transition: transform 0.2s, background 0.2s, opacity 0.5s;
+            transition: transform 0.2s, background 0.2s;
         }
         .install-pwa-btn:hover {
             background: #45a049;
@@ -949,10 +1061,10 @@ function updateOfflineIndicators() {
                 const track = JSON.parse(trackData);
                 if (isTrackCached(track)) {
                     btn.classList.add('downloaded');
-                    btn.title = 'Downloaded for offline';
+                    btn.textContent = 'Downloaded';
                 } else {
                     btn.classList.remove('downloaded');
-                    btn.title = 'Download for offline';
+                    btn.textContent = 'Download';
                 }
             } catch (e) {}
         }
@@ -1883,15 +1995,17 @@ function renderBookList() {
     content.innerHTML = list.map((track, index) => {
         const trackWithSource = {...track, sourceType: APP.currentBand};
         const trackJson = JSON.stringify(trackWithSource).replace(/"/g, '&quot;');
+        const isCurrentTrack = index === APP.currentIndex;
         return `
-        <div class="program-item ${index === APP.currentIndex ? 'active-track' : ''}" data-index="${index}">
+        <div class="program-item ${isCurrentTrack ? 'active-track' : ''}" data-index="${index}">
             <div class="program-item-main">
                 <div class="artist">${track.artist}</div>
                 <div class="title">${track.title}</div>
             </div>
             <div class="program-item-actions">
-                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}" title="Download for offline">?</button>
-                <button class="add-to-playlist-btn" data-track-index="${index}" title="Add to playlist">+</button>
+                ${isCurrentTrack ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
+                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>
+                <button class="add-to-playlist-btn" data-track-index="${index}">+ Playlist</button>
             </div>
         </div>`;
     }).join('');
@@ -1920,15 +2034,17 @@ function renderTrackList() {
         const title = track.title || track.Title;
         const trackWithSource = {...track, sourceType: 'radio'};
         const trackJson = JSON.stringify(trackWithSource).replace(/"/g, '&quot;');
+        const isCurrentTrack = index === APP.currentIndex;
         return `
-        <div class="program-item ${index === APP.currentIndex ? 'active-track' : ''}" data-index="${index}">
+        <div class="program-item ${isCurrentTrack ? 'active-track' : ''}" data-index="${index}">
             <div class="program-item-main">
                 <div class="artist">${artist}</div>
                 <div class="title">${title}</div>
             </div>
             <div class="program-item-actions">
-                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}" title="Download for offline">?</button>
-                <button class="add-to-playlist-btn" data-track-index="${index}" title="Add to playlist">+</button>
+                ${isCurrentTrack ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
+                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>
+                <button class="add-to-playlist-btn" data-track-index="${index}">+ Playlist</button>
             </div>
         </div>`;
     }).join('');
@@ -1994,7 +2110,7 @@ function renderArtistList() {
             <div class="artist-list-item-content">
                 <div class="name">${artist.replace(/^\d+\s-\s/, '')}</div>
                 <div class="artist-actions">
-                    <button class="download-artist-btn" title="Download entire artist" data-artist-folder="${artist}">?</button>
+                    <button class="download-artist-btn" data-artist-folder="${artist}">Download</button>
                     <div class="count">${artists[artist]}</div>
                 </div>
             </div>
@@ -2172,8 +2288,9 @@ function renderPlaylistTracks(playlistId) {
                     <div class="title">${title}</div>
                 </div>
                 <div class="program-item-actions">
-                    <button class="download-track-btn ${isCached ? 'downloaded' : ''}" data-track='${trackJson}' data-track-index="${index}" title="${isCached ? 'Downloaded' : 'Download'}">?</button>
-                    <button class="remove-from-playlist-btn" data-track-index="${index}" title="Remove from playlist">�</button>
+                    ${isActive ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
+                    <button class="download-track-btn ${isCached ? 'downloaded' : ''}" data-track='${trackJson}' data-track-index="${index}">${isCached ? 'Downloaded' : 'Download'}</button>
+                    <button class="remove-from-playlist-btn" data-track-index="${index}">Remove</button>
                 </div>
             </div>`;
         }).join('');
