@@ -1,6 +1,6 @@
-// ZENITH APP.JS - VERSION 4.2 - ARTIST DOWNLOADS & HIGH CONTRAST
-// If you don't see "VERSION 4.2" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 4.2 LOADED ===');
+// ZENITH APP.JS - VERSION 4.4 - PWA INSTALL BUTTON ON HOME SCREEN
+// If you don't see "VERSION 4.4" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 4.4 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
@@ -18,6 +18,7 @@ const APP = {
     swReady: false,
     pageVisible: true,
     isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), 
+    deferredPrompt: null, // Store PWA install prompt
     
     currentBand: 'radio', 
     currentIndex: 0,
@@ -54,6 +55,7 @@ const APP = {
     }
 };
 
+// NEW: Inject styles for high contrast buttons AND Install Button
 function injectCustomStyles() {
     const style = document.createElement('style');
     style.textContent = `
@@ -114,6 +116,47 @@ function injectCustomStyles() {
             width: 32px;
             height: 32px;
             font-size: 0.9em;
+        }
+        
+        /* PWA Install Button - Floating on Home Screen */
+        .install-pwa-btn {
+            display: none; /* Hidden by default */
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999; /* Top of everything */
+            
+            width: auto;
+            min-width: 200px;
+            padding: 12px 24px;
+            
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            
+            transition: transform 0.2s, background 0.2s, opacity 0.5s;
+        }
+        .install-pwa-btn:hover {
+            background: #45a049;
+            transform: translateX(-50%) scale(1.05);
+        }
+        .install-pwa-btn.visible {
+            display: block;
+            animation: slideUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        @keyframes slideUp {
+            from { bottom: -80px; opacity: 0; }
+            to { bottom: 30px; opacity: 1; }
         }
     `;
     document.head.appendChild(style);
@@ -185,9 +228,10 @@ async function initializeApp() {
     
     console.log('[initializeApp] Starting, default currentBand:', APP.currentBand);
 
-    injectCustomStyles();
+    injectCustomStyles(); 
     loadUserPlaylists();
     registerServiceWorker();
+    setupPWA(); // Initialize PWA Install Listeners
     setupVisibilityHandler();
 
     try {
@@ -246,7 +290,64 @@ async function initializeApp() {
 }
 
 // =========================================================================
-// MEDIA SESSION API (ANDROID AUTO / LOCK SCREEN)
+// PWA INSTALLATION LOGIC (UPDATED)
+// =========================================================================
+
+function setupPWA() {
+    // 1. Check if already installed (standalone mode)
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+        console.log("App is running in standalone mode (already installed).");
+        return; 
+    }
+
+    // 2. Create the Install Button in DOM (Floating on body)
+    // We attach it to body so it floats over the main UI (initial power screen)
+    const installBtn = document.createElement('button');
+    installBtn.className = 'install-pwa-btn';
+    installBtn.id = 'pwa-install-btn';
+    installBtn.innerHTML = '&#8595; Install App';
+    
+    document.body.appendChild(installBtn);
+
+    installBtn.addEventListener('click', async () => {
+        if (!APP.deferredPrompt) return;
+        // Show the install prompt
+        APP.deferredPrompt.prompt();
+        // Wait for the user to respond to the prompt
+        const { outcome } = await APP.deferredPrompt.userChoice;
+        console.log(`User response to the install prompt: ${outcome}`);
+        // We've used the prompt, so it can't be used again, discard it
+        APP.deferredPrompt = null;
+        // Hide the button
+        installBtn.classList.remove('visible');
+    });
+
+    // 3. Listen for the browser event that says "Hey, this app is installable!"
+    window.addEventListener('beforeinstallprompt', (e) => {
+        // Prevent Chrome 67+ from automatically showing the mini-infobar
+        e.preventDefault();
+        // Stash the event so it can be triggered later.
+        APP.deferredPrompt = e;
+        console.log("PWA Install Prompt captured!");
+        
+        // Show our custom button
+        const btn = document.getElementById('pwa-install-btn');
+        if (btn) btn.classList.add('visible');
+    });
+
+    // 4. Listen for successful installation
+    window.addEventListener('appinstalled', () => {
+        // Clear prompt
+        APP.deferredPrompt = null;
+        // Hide button
+        const btn = document.getElementById('pwa-install-btn');
+        if (btn) btn.classList.remove('visible');
+        console.log('PWA was successfully installed');
+    });
+}
+
+// =========================================================================
+// MEDIA SESSION API
 // =========================================================================
 
 function setupMediaSession() {
