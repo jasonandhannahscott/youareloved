@@ -38,10 +38,10 @@
                 </div>
 
                 <div class="center-console">
-                    <div class="piano-keys-group">
-                        <button class="piano-key band-btn" data-band="book1">Book I</button>
-                        <button class="piano-key band-btn" data-band="book2">Book II</button>
-                        <button class="piano-key active band-btn" data-band="radio">Radio</button>
+                    <div class="transport-controls-group">
+                        <button class="transport-btn" id="stop-btn" title="Stop">■</button>
+                        <button class="transport-btn" id="pause-btn" title="Pause">⏸</button>
+                        <button class="transport-btn active" id="play-btn" title="Play">▶</button>
                     </div>
                     <button class="push-button program-guide-btn" id="guide-btn">List</button>
                 </div>
@@ -68,6 +68,8 @@
         <div class="guide-controls-container" id="guide-controls">
             <div class="guide-tabs">
                 <div class="tab-btn active" data-view="tracks">Tracks</div>
+                <div class="tab-btn" data-view="book1">Book I</div>
+                <div class="tab-btn" data-view="book2">Book II</div>
                 <div class="tab-btn" data-view="artists">Artists</div>
                 <div class="tab-btn" data-view="genres">Genres</div>
                 <div class="tab-btn" data-view="playlists">Playlists</div>

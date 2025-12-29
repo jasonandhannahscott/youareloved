@@ -1,10 +1,35 @@
-// ZENITH APP.JS - VERSION 5.0 - UI & SHUFFLE FIXES
-// If you don't see "VERSION 5.0" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 5.0 LOADED ===');
+// ZENITH APP.JS - VERSION 5.2 - TRANSPORT CONTROLS & IMPROVEMENTS
+// If you don't see "VERSION 5.2" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 5.2 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
 const qsa = (s) => document.querySelectorAll(s);
+
+// BroadcastChannel for cross-tab/PWA instance communication
+let broadcastChannel = null;
+const INSTANCE_ID = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+function setupBroadcastChannel() {
+    if (!('BroadcastChannel' in window)) return;
+    
+    broadcastChannel = new BroadcastChannel('zenith_playback');
+    
+    broadcastChannel.onmessage = (event) => {
+        if (event.data.senderId === INSTANCE_ID) return; // Ignore own messages
+        
+        if (event.data.type === 'playback_started') {
+            console.log('[BroadcastChannel] Another instance started playback, stopping this one');
+            stopPlayback(true); // Stop without broadcasting
+        }
+    };
+}
+
+function notifyPlaybackStarted() {
+    if (broadcastChannel) {
+        broadcastChannel.postMessage({ type: 'playback_started', senderId: INSTANCE_ID });
+    }
+}
 
 const APP = {
     initialized: false,
@@ -37,7 +62,7 @@ const APP = {
     staticGain: null, musicGain: null, currentHowl: null,
     isPlaying: false, isDragging: false, isTransitioning: false,
     
-    sectionWidth: 150, 
+    sectionWidth: 180, 
     volume: 0.8, 
     expandTimer: null,
     volumeSliderTimeout: null,
@@ -151,13 +176,14 @@ function injectCustomStyles() {
         
         /* Now Playing indicator - GOLD styling */
         .now-playing-indicator {
-            background: transparent !important;
-            border: 2px solid var(--brass-gold) !important;
-            color: var(--brass-gold) !important;
+            background: rgba(212, 175, 55, 0.15) !important;
+            border: 2px solid #d4af37 !important;
+            color: #d4af37 !important;
             cursor: default !important;
             font-weight: 700 !important;
             padding: 6px 12px !important;
             font-size: 0.7rem !important;
+            box-shadow: 0 0 8px rgba(212, 175, 55, 0.3) !important;
         }
         
         /* Download button progress fill */
@@ -506,6 +532,67 @@ function injectCustomStyles() {
             from { bottom: -80px; opacity: 0; }
             to { bottom: 30px; opacity: 1; }
         }
+        
+        /* Pause Power Button on Speaker Grille */
+        .grille-power-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, var(--bakelite), var(--dark-walnut));
+            border: 4px solid var(--brass-gold);
+            cursor: pointer;
+            z-index: 60;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.6), inset 0 2px 5px rgba(255,255,255,0.1);
+            transition: all 0.3s ease;
+        }
+        .grille-power-btn:hover {
+            transform: translate(-50%, -50%) scale(1.08);
+            box-shadow: 0 10px 30px rgba(212, 175, 55, 0.4);
+        }
+        .grille-power-btn::after {
+            content: '▶';
+            font-size: 2.5rem;
+            color: var(--brass-gold);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .grille-power-btn.visible {
+            display: flex;
+        }
+        
+        /* Dial scroll indicators - clickable */
+        .dial-container .scroll-indicator {
+            cursor: pointer;
+            pointer-events: auto;
+            transition: all 0.2s ease;
+            z-index: 30;
+        }
+        .dial-container .scroll-indicator:hover {
+            animation: none;
+            transform: translateY(-50%) scale(1.2);
+            text-shadow: 0 0 20px rgba(212, 175, 55, 1);
+            opacity: 1;
+        }
+        .dial-container .scroll-indicator:active {
+            animation: none;
+            transform: translateY(-50%) scale(0.95);
+            color: var(--tube-glow);
+            opacity: 1;
+        }
+        /* Keep indicators visible when hidden class is added but still allow clicks */
+        .dial-container .scroll-indicator.hidden {
+            opacity: 0.3;
+            pointer-events: auto;
+        }
+        .dial-container .scroll-indicator.hidden:hover {
+            opacity: 1;
+        }
     `;
     document.head.appendChild(style);
 }
@@ -596,6 +683,7 @@ async function initializeApp() {
     registerServiceWorker();
     setupPWA(); // Initialize PWA Install Listeners
     setupVisibilityHandler();
+    setupBroadcastChannel(); // Setup cross-instance communication
     
     // Always try to restore shuffle state and track info
     // Only skip restoring position if startWithShuffle is true
@@ -639,6 +727,17 @@ async function initializeApp() {
         setupMediaSession();
         createSettingsPanel();  // Create settings UI
         addSettingsButton();    // Add gear icon
+        
+        // Restore volume if saved and not starting with shuffle
+        if (shouldRestorePosition && typeof APP.pendingRestoreVolume === 'number') {
+            APP.volume = APP.pendingRestoreVolume;
+            if (APP.gainNode) APP.gainNode.gain.value = APP.volume;
+            const volSlider = $('volume-slider');
+            if (volSlider) volSlider.value = APP.volume;
+        }
+        
+        // Initialize volume knob rotation
+        updateVolumeKnobRotation(APP.volume);
         
         const shuffleBtn = $('shuffle-btn');
         if (shuffleBtn && APP.radioState.isShuffled) {
@@ -855,6 +954,170 @@ function updatePlaybackState() {
     
     navigator.mediaSession.playbackState = APP.isPlaying ? "playing" : "paused";
     updatePositionState();
+    
+    // Update grille power button and now playing display visibility
+    updateGrillePlaybackUI();
+}
+
+function updateGrillePlaybackUI() {
+    const nowPlaying = $('radio-now-playing');
+    const powerBtn = $('grille-power-btn');
+    
+    if (APP.currentBand === 'radio') {
+        if (APP.isPlaying) {
+            // Playing: show now playing, hide power button
+            if (nowPlaying) nowPlaying.classList.add('visible');
+            if (powerBtn) powerBtn.classList.remove('visible');
+        } else {
+            // Paused: hide now playing, show power button
+            if (nowPlaying) nowPlaying.classList.remove('visible');
+            if (powerBtn) powerBtn.classList.add('visible');
+        }
+    } else {
+        // Non-radio mode: hide both
+        if (nowPlaying) nowPlaying.classList.remove('visible');
+        if (powerBtn) powerBtn.classList.remove('visible');
+    }
+}
+
+function resumePlayback() {
+    if (!APP.currentHowl) return;
+    
+    // Resume audio context if suspended
+    if (APP.audioContext && APP.audioContext.state === 'suspended') {
+        APP.audioContext.resume();
+    }
+    
+    // Notify other instances that we're starting playback
+    notifyPlaybackStarted();
+    
+    APP.currentHowl.play();
+    APP.isPlaying = true;
+    
+    // Also check video
+    const vid = $('video-player');
+    if (vid && vid.src) {
+        vid.play().catch(() => {});
+    }
+    
+    updatePlaybackState();
+}
+
+function pausePlayback() {
+    if (APP.currentHowl) {
+        APP.currentHowl.pause();
+    }
+    APP.isPlaying = false;
+    
+    const vid = $('video-player');
+    if (vid) vid.pause();
+    
+    updatePlaybackState();
+}
+
+function playPlayback() {
+    // Notify other instances
+    notifyPlaybackStarted();
+    
+    if (APP.audioContext && APP.audioContext.state === 'suspended') {
+        APP.audioContext.resume();
+    }
+    
+    if (APP.currentHowl) {
+        APP.currentHowl.play();
+        APP.isPlaying = true;
+    }
+    
+    const vid = $('video-player');
+    if (vid && vid.src) {
+        vid.play().catch(() => {});
+    }
+    
+    updatePlaybackState();
+}
+
+function stopPlayback(skipBroadcast = false) {
+    // Pause the audio
+    if (APP.currentHowl) {
+        APP.currentHowl.pause();
+        APP.currentHowl.seek(0); // Reset to beginning
+    }
+    APP.isPlaying = false;
+    
+    // Reset video
+    const vid = $('video-player');
+    if (vid) {
+        vid.pause();
+        vid.currentTime = 0;
+    }
+    
+    // Clear Media Session metadata
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+        
+        // Remove action handlers
+        try {
+            navigator.mediaSession.setActionHandler('play', null);
+            navigator.mediaSession.setActionHandler('pause', null);
+            navigator.mediaSession.setActionHandler('previoustrack', null);
+            navigator.mediaSession.setActionHandler('nexttrack', null);
+            navigator.mediaSession.setActionHandler('seekbackward', null);
+            navigator.mediaSession.setActionHandler('seekforward', null);
+        } catch(e) {
+            // Some actions might not be supported
+        }
+    }
+    
+    updatePlaybackState();
+}
+
+function updateVolumeKnobRotation(volume) {
+    const knob = $('volume-btn');
+    if (!knob) return;
+    
+    // Map volume 0-1 to rotation -135 to 135 degrees (270 degree range)
+    const rotation = -135 + (volume * 270);
+    knob.style.transform = `rotate(${rotation}deg)`;
+}
+
+function updateTransportButtonStates() {
+    const stopBtn = $('stop-btn');
+    const pauseBtn = $('pause-btn');
+    const playBtn = $('play-btn');
+    
+    if (!stopBtn || !pauseBtn || !playBtn) return;
+    
+    stopBtn.classList.remove('active');
+    pauseBtn.classList.remove('active');
+    playBtn.classList.remove('active');
+    
+    if (APP.isPlaying) {
+        playBtn.classList.add('active');
+    } else {
+        pauseBtn.classList.add('active');
+    }
+}
+
+function switchToBand(newBand) {
+    console.log('[Band Switch] Switching from', APP.currentBand, 'to', newBand);
+    
+    APP.currentBand = newBand;
+    APP.currentIndex = 0;
+    APP.recentBandSwitch = true;
+    
+    if (APP.nextTrackHowl) {
+        APP.nextTrackHowl.unload();
+        APP.nextTrackHowl = null;
+    }
+    APP.nextTrackSrc = null;
+    if (APP.bandSwitchTimer) clearTimeout(APP.bandSwitchTimer);
+    
+    buildDial();
+    APP.bandSwitchTimer = setTimeout(() => {
+        APP.bandSwitchTimer = null;
+        loadTrack(0);
+    }, 100);
 }
 
 function updatePositionState() {
@@ -985,6 +1248,7 @@ function savePlaybackState() {
             band: APP.currentBand,
             index: APP.currentIndex,
             time: APP.currentHowl ? APP.currentHowl.seek() : 0,
+            volume: APP.volume, // Save volume level
             artistFilter: APP.radioState.activeArtistFilter,
             genreFilter: APP.radioState.activeGenre,
             isShuffled: APP.radioState.isShuffled,
@@ -1050,6 +1314,12 @@ function restorePlaybackState() {
     // Restore index (will be applied after data loads)
     APP.pendingRestoreIndex = state.index || 0;
     APP.pendingRestoreTime = state.time || 0;
+    
+    // Restore volume if saved
+    if (typeof state.volume === 'number' && !APP.settings.startWithShuffle) {
+        APP.volume = state.volume;
+        APP.pendingRestoreVolume = state.volume;
+    }
     
     return true;
 }
@@ -1196,6 +1466,19 @@ function addSettingsButton() {
             <div class="now-playing-title"></div>
         `;
         speakerGrille.appendChild(nowPlaying);
+    }
+    
+    // Add the grille power button for unpausing
+    if (speakerGrille && !$('grille-power-btn')) {
+        const powerBtn = document.createElement('div');
+        powerBtn.className = 'grille-power-btn';
+        powerBtn.id = 'grille-power-btn';
+        powerBtn.title = 'Resume playback';
+        powerBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            resumePlayback();
+        });
+        speakerGrille.appendChild(powerBtn);
     }
 }
 function createPlaylist(name) {
@@ -1690,13 +1973,11 @@ function buildDial() {
             <div class="needle"></div>
         `;
 
-        $('guide-controls').classList.add('visible');
         const excerpt = $('excerpt-display');
         if(excerpt) { excerpt.innerHTML = ''; excerpt.style.display = 'none'; }
         
-        // Show the radio now playing display
-        const radioNowPlaying = $('radio-now-playing');
-        if (radioNowPlaying) radioNowPlaying.classList.add('visible');
+        // Update the radio now playing display based on current play state
+        updateGrillePlaybackUI();
         
         APP.virtualState.pool = Array.from(document.querySelectorAll('.virtual-item'));
 
@@ -1712,14 +1993,12 @@ function buildDial() {
 
     } else {
         container.classList.remove('dual-mode');
-        $('guide-controls').classList.remove('visible');
         
         const excerpt = $('excerpt-display');
         if(excerpt) excerpt.style.display = '';
         
-        // Hide the radio now playing display
-        const radioNowPlaying = $('radio-now-playing');
-        if (radioNowPlaying) radioNowPlaying.classList.remove('visible');
+        // Update grille UI (hides now playing and power button in non-radio mode)
+        updateGrillePlaybackUI();
         
         container.innerHTML = `
             <div class="${indicatorClass} left" id="scroll-left">&#x300A;</div>
@@ -1745,6 +2024,96 @@ function buildDial() {
         }, 50);
     }
     updateArrowButtons();
+    setupDialScrollIndicators();
+}
+
+// Setup click handlers for dial scroll indicators (the arrows on the dial itself)
+function setupDialScrollIndicators() {
+    const container = $('main-dial-container');
+    if (!container) return;
+    
+    // Get all scroll indicators in the dial container
+    const leftIndicators = container.querySelectorAll('.scroll-indicator.left');
+    const rightIndicators = container.querySelectorAll('.scroll-indicator.right');
+    
+    // Remove old handlers by cloning
+    leftIndicators.forEach(el => {
+        const clone = el.cloneNode(true);
+        el.parentNode.replaceChild(clone, el);
+    });
+    rightIndicators.forEach(el => {
+        const clone = el.cloneNode(true);
+        el.parentNode.replaceChild(clone, el);
+    });
+    
+    // Re-get after cloning
+    const newLeftIndicators = container.querySelectorAll('.scroll-indicator.left');
+    const newRightIndicators = container.querySelectorAll('.scroll-indicator.right');
+    
+    newLeftIndicators.forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleDialIndicatorClick('left', el);
+        });
+    });
+    
+    newRightIndicators.forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleDialIndicatorClick('right', el);
+        });
+    });
+}
+
+function handleDialIndicatorClick(direction, element) {
+    hideOnboardingHints();
+    
+    // Determine which band the click was in (FM or AM in radio mode, or main dial)
+    const parentBand = element.closest('.radio-band');
+    const isFmBand = parentBand && parentBand.classList.contains('fm-band');
+    const isAmBand = parentBand && parentBand.classList.contains('am-band');
+    
+    if (APP.currentBand === 'radio') {
+        if (isFmBand) {
+            // FM band: change artist
+            const newIndex = direction === 'left' 
+                ? Math.max(0, APP.radioState.lastArtistIndex - 1)
+                : Math.min(APP.radioArtists.length - 1, APP.radioState.lastArtistIndex + 1);
+            
+            if (newIndex !== APP.radioState.lastArtistIndex) {
+                APP.radioState.lastArtistIndex = newIndex;
+                const artist = APP.radioArtists[newIndex];
+                if (artist) {
+                    APP.currentIndex = artist.firstSongIndex;
+                    snapVirtualTo(APP.currentIndex, false, () => loadTrack(APP.currentIndex, false));
+                    const fmTrack = $('fm-track');
+                    if (fmTrack) {
+                        snapToPosition(fmTrack, fmTrack.parentElement, newIndex, false);
+                    }
+                }
+            }
+        } else if (isAmBand) {
+            // AM band: change song
+            const list = getCurrentTrackList();
+            const newIndex = direction === 'left'
+                ? Math.max(0, APP.currentIndex - 1)
+                : Math.min(list.length - 1, APP.currentIndex + 1);
+            
+            if (newIndex !== APP.currentIndex) {
+                tuneToStation(newIndex);
+            }
+        }
+    } else {
+        // Non-radio mode: change song
+        const list = getCurrentTrackList();
+        const newIndex = direction === 'left'
+            ? Math.max(0, APP.currentIndex - 1)
+            : Math.min(list.length - 1, APP.currentIndex + 1);
+        
+        if (newIndex !== APP.currentIndex) {
+            tuneToStation(newIndex);
+        }
+    }
 }
 
 function updateActiveStations(track) {
@@ -1894,7 +2263,7 @@ function setupDualDraggables() {
         
         const distanceToSnap = Math.abs(rawIndex - clampedIndex);
         APP.musicGain.gain.value = (1 - distanceToSnap) * APP.volume;
-        setStaticGain(APP.isPlaying ? (distanceToSnap * 0.3 * APP.volume) : 0);
+        setStaticGain(APP.isPlaying ? (distanceToSnap * 0.15 * APP.volume) : 0);
 
         renderVirtualDial(x);
         
@@ -2083,7 +2452,7 @@ function snapToPosition(track, container, index, immediate = false, onComplete =
                             loadTrack(index, true, true); 
                         }
                         const p = this.progress(); 
-                        const staticMax = 0.6 * APP.volume;
+                        const staticMax = 0.3 * APP.volume;
                         const intensity = Math.sin(p * Math.PI); 
                         APP.musicGain.gain.value = APP.volume * (1 - (intensity * 0.5));
                         setStaticGain(intensity * staticMax);
@@ -2091,7 +2460,7 @@ function snapToPosition(track, container, index, immediate = false, onComplete =
                         const dist = Math.abs(gsap.getProperty(track, 'x') - targetX);
                         const normDist = Math.min(dist / (APP.sectionWidth / 2), 1);
                         APP.musicGain.gain.value = (1 - normDist) * APP.volume;
-                        setStaticGain(APP.isPlaying ? (normDist * 0.6 * APP.volume) : 0);
+                        setStaticGain(APP.isPlaying ? (normDist * 0.3 * APP.volume) : 0);
                     }
                 }
                 updateActiveStations(track);
@@ -2136,7 +2505,7 @@ function snapVirtualTo(index, immediate = false, onComplete = null, forceTransit
                         loadTrack(index, true, true); 
                     }
                     const p = this.progress(); 
-                    const staticMax = 0.6 * APP.volume;
+                    const staticMax = 0.3 * APP.volume;
                     const intensity = Math.sin(p * Math.PI); 
                     APP.musicGain.gain.value = APP.volume * (1 - (intensity * 0.5));
                     setStaticGain(intensity * staticMax);
@@ -2144,7 +2513,7 @@ function snapVirtualTo(index, immediate = false, onComplete = null, forceTransit
                     const dist = Math.abs(currentX - targetX);
                     const normDist = Math.min(dist / (APP.sectionWidth / 2), 1);
                     APP.musicGain.gain.value = (1 - normDist) * APP.volume;
-                    setStaticGain(APP.isPlaying ? (normDist * 0.6 * APP.volume) : 0);
+                    setStaticGain(APP.isPlaying ? (normDist * 0.3 * APP.volume) : 0);
                 }
                 renderVirtualDial(currentX);
             },
@@ -2248,19 +2617,46 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     newHowl = new Howl({
         src: [targetUrl],
         format: ['mp3'], html5: true,
-        onend: handleAutoplay,
+        onend: () => {
+            console.log('[Howl] onend triggered, calling handleAutoplay');
+            // Small delay to ensure clean state before autoplay
+            setTimeout(handleAutoplay, 100);
+        },
         onplay: () => { 
             APP.isPlaying = true; 
             updatePlaybackState(); 
+            updateTransportButtonStates();
             startPositionUpdater(); // START UPDATING POSITION
         },
-        onpause: () => { APP.isPlaying = false; updatePlaybackState(); },
-        onstop: () => { APP.isPlaying = false; updatePlaybackState(); },
+        onpause: () => { 
+            APP.isPlaying = false; 
+            updatePlaybackState(); 
+            updateTransportButtonStates();
+        },
+        onstop: () => { 
+            APP.isPlaying = false; 
+            updatePlaybackState(); 
+            updateTransportButtonStates();
+        },
         onload: function() {
             if (APP.currentHowl !== this) { this.unload(); return; }
             // Audio metadata is now loaded - update position state with valid duration
             if (APP.isPlaying) {
                 updatePositionState();
+            }
+        },
+        onloaderror: (id, error) => {
+            console.error('[Howl] Load error:', error);
+            // Try to continue to next track on error
+            setTimeout(handleAutoplay, 500);
+        },
+        onplayerror: (id, error) => {
+            console.error('[Howl] Play error:', error);
+            // Try to unlock and play
+            if (APP.currentHowl) {
+                APP.currentHowl.once('unlock', () => {
+                    APP.currentHowl.play();
+                });
             }
         }
     });
@@ -2283,12 +2679,16 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     APP.currentHowl = newHowl;
 
     if (APP.isPlaying) {
+        // Notify other instances that we're starting playback
+        notifyPlaybackStarted();
+        
         APP.currentHowl.play();
         // Skip fade-in if backgrounded
         if (!shouldUseSimpleTransitions()) {
             APP.currentHowl.fade(0, APP.volume, 500);
         }
         updatePlaybackState(); // Update MediaSession
+        updateTransportButtonStates(); // Update transport buttons
     }
 
     if (APP.currentHowl._sounds.length > 0 && APP.currentHowl._sounds[0]._node && APP.audioContext) {
@@ -2313,7 +2713,9 @@ function updateRadioNowPlaying(track) {
         
         display.querySelector('.now-playing-artist').textContent = artist;
         display.querySelector('.now-playing-title').textContent = title;
-        display.classList.add('visible');
+        
+        // Let updateGrillePlaybackUI handle visibility based on play state
+        updateGrillePlaybackUI();
     } else {
         display.classList.remove('visible');
     }
@@ -2476,18 +2878,8 @@ function setupControls() {
         const vid = $('video-player');
         if(vid) vid.volume = val;
 
-        if (val === 0 && APP.isPlaying) {
-            APP.isPlaying = false;
-            updatePlaybackState();
-            if(APP.currentHowl) APP.currentHowl.pause();
-            if(vid) vid.pause();
-        } else if (val > 0 && !APP.isPlaying) {
-            APP.isPlaying = true;
-            updatePlaybackState();
-            if(APP.audioContext.state === 'suspended') APP.audioContext.resume();
-            if(APP.currentHowl) APP.currentHowl.play();
-            if(vid) vid.play().catch(()=>{});
-        }
+        // Update knob rotation to reflect volume
+        updateVolumeKnobRotation(val);
         showVolumeSlider();
     });
     volSlider.addEventListener('change', hideVolumeSlider);
@@ -2519,14 +2911,8 @@ function setupControls() {
         const vid = $('video-player');
         if(vid) vid.volume = newVol;
         
-        // Update state based on volume
-        if (newVol === 0 && APP.isPlaying) {
-            APP.isPlaying = false;
-            updatePlaybackState();
-        } else if (newVol > 0 && !APP.isPlaying) {
-            APP.isPlaying = true;
-            updatePlaybackState();
-        }
+        // Update knob rotation to reflect volume
+        updateVolumeKnobRotation(newVol);
 
     }, { passive: false });
 
@@ -2545,30 +2931,20 @@ function setupControls() {
     volGroup.addEventListener('mouseleave', hideVolumeSlider);
     document.addEventListener('touchstart', (e) => { if (!volGroup.contains(e.target)) hideVolumeSliderNow(); }, { passive: true });
 
-    qs('.piano-keys-group').addEventListener('click', (e) => {
-        if (e.target.classList.contains('band-btn')) {
-            const newBand = e.target.dataset.band;
-            console.log('[Band Switch] Switching from', APP.currentBand, 'to', newBand);
-            
-            qsa('.band-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            APP.currentBand = newBand;
-            APP.currentIndex = 0;
-            APP.recentBandSwitch = true;
-            
-            if (APP.nextTrackHowl) {
-                APP.nextTrackHowl.unload();
-                APP.nextTrackHowl = null;
-            }
-            APP.nextTrackSrc = null;
-            if (APP.bandSwitchTimer) clearTimeout(APP.bandSwitchTimer);
-            
-            buildDial();
-            APP.bandSwitchTimer = setTimeout(() => {
-                APP.bandSwitchTimer = null;
-                loadTrack(0);
-            }, 100);
-        }
+    // Transport controls (Stop, Pause, Play)
+    $('stop-btn').addEventListener('click', () => {
+        stopPlayback();
+        updateTransportButtonStates();
+    });
+    
+    $('pause-btn').addEventListener('click', () => {
+        pausePlayback();
+        updateTransportButtonStates();
+    });
+    
+    $('play-btn').addEventListener('click', () => {
+        playPlayback();
+        updateTransportButtonStates();
     });
 
     $('left-arrow').addEventListener('click', () => { 
@@ -2591,8 +2967,22 @@ function setupControls() {
         btn.addEventListener('click', (e) => {
             qsa('.tab-btn').forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
-            APP.radioState.viewMode = e.target.dataset.view;
-            openProgramGuide(); 
+            const view = e.target.dataset.view;
+            APP.radioState.viewMode = view;
+            
+            // Handle Book I and Book II tabs - switch band and render
+            if (view === 'book1' || view === 'book2') {
+                switchToBand(view);
+                renderBookList();
+            } else if (view === 'tracks' || view === 'artists' || view === 'genres') {
+                // Radio-related views - switch to radio band if not already
+                if (APP.currentBand !== 'radio' && !APP.currentBand.startsWith('playlist_')) {
+                    switchToBand('radio');
+                }
+                openProgramGuide(); 
+            } else {
+                openProgramGuide(); 
+            }
         });
     });
 
@@ -2639,17 +3029,37 @@ function setupControls() {
 }
 
 function openProgramGuide() {
-    if (APP.currentBand === 'book1' || APP.currentBand === 'book2') {
+    // Handle view mode (tracks, artists, genres, playlists, book1, book2)
+    const view = APP.radioState.viewMode;
+    
+    // Set active tab based on current band/view
+    qsa('.tab-btn').forEach(b => b.classList.remove('active'));
+    
+    if (view === 'book1' || view === 'book2') {
+        // Switch to book mode if not already
+        if (APP.currentBand !== view) {
+            switchToBand(view);
+        }
+        const tabBtn = qs(`.tab-btn[data-view="${view}"]`);
+        if (tabBtn) tabBtn.classList.add('active');
+        renderBookList();
+    } else if (APP.currentBand === 'book1' || APP.currentBand === 'book2') {
+        // We're in a book mode, show the book list and highlight correct tab
+        const tabBtn = qs(`.tab-btn[data-view="${APP.currentBand}"]`);
+        if (tabBtn) tabBtn.classList.add('active');
         renderBookList();
     } else if (APP.currentBand.startsWith('playlist_')) {
         // Find which playlist we are in
         const pid = APP.currentBand.replace('playlist_', '');
         renderPlaylistTracks(pid);
         // Force tab to playlists
-        qsa('.tab-btn').forEach(b => b.classList.remove('active'));
-        qs('.tab-btn[data-view="playlists"]').classList.add('active');
+        const tabBtn = qs('.tab-btn[data-view="playlists"]');
+        if (tabBtn) tabBtn.classList.add('active');
     } else {
-        // Radio logic
+        // Radio logic - highlight current view tab
+        const tabBtn = qs(`.tab-btn[data-view="${APP.radioState.viewMode}"]`);
+        if (tabBtn) tabBtn.classList.add('active');
+        
         if (APP.radioState.viewMode === 'artists') renderArtistList();
         else if (APP.radioState.viewMode === 'genres') renderGenreList();
         else if (APP.radioState.viewMode === 'playlists') renderPlaylistList();
