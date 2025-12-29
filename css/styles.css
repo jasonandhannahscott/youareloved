@@ -458,6 +458,9 @@ input[type=range].vertical-slider::-webkit-slider-thumb {
     font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
     text-shadow: 0 -1px 0 rgba(0,0,0,0.8), 0 1px 0 rgba(255,255,255,0.1); transition: all 0.1s; padding-bottom: 2px;
 }
+/* Ensure both arrows are positioned close to edge */
+.rocker-half.left { justify-content: flex-start; padding-left: 6px; padding-right: 0; }
+.rocker-half.right { justify-content: flex-end; padding-right: 6px; padding-left: 0; }
 .rocker-half:hover { background: rgba(255, 255, 255, 0.05); }
 .rocker-half:active { background: rgba(0, 0, 0, 0.4); color: #ff6b35; text-shadow: 0 0 10px var(--tube-glow); box-shadow: inset 0 0 10px rgba(0,0,0,0.8); }
 

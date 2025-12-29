@@ -1,6 +1,6 @@
-// ZENITH APP.JS - VERSION 4.7 - REDESIGNED TRACK CARDS
-// If you don't see "VERSION 4.7" in console, clear browser cache!
-console.log('=== ZENITH APP.JS VERSION 4.7 LOADED ===');
+// ZENITH APP.JS - VERSION 5.0 - UI & SHUFFLE FIXES
+// If you don't see "VERSION 5.0" in console, clear browser cache!
+console.log('=== ZENITH APP.JS VERSION 5.0 LOADED ===');
 
 const $ = (id) => document.getElementById(id);
 const qs = (s) => document.querySelector(s);
@@ -17,8 +17,13 @@ const APP = {
     cachedUrls: new Set(),
     swReady: false,
     pageVisible: true,
-    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent), 
+    isBackgrounded: false, // Track if app is in background/locked
+    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+    isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),
+    isAndroid: /Android/i.test(navigator.userAgent),
+    isPWA: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
     deferredPrompt: null, // Store PWA install prompt
+    shuffleDebounce: false, // Prevent rapid shuffle clicks
     
     currentBand: 'radio', 
     currentIndex: 0,
@@ -37,7 +42,12 @@ const APP = {
     expandTimer: null,
     volumeSliderTimeout: null,
     bandSwitchTimer: null,
-    positionTimer: null, 
+    positionTimer: null,
+    
+    // User settings
+    settings: {
+        startWithShuffle: true  // Default: start with random playback
+    },
 
     radioState: {
         isShuffled: true, 
@@ -129,6 +139,8 @@ function injectCustomStyles() {
             height: auto !important;
             line-height: 1.2 !important;
             transition: all 0.15s ease !important;
+            position: relative !important;
+            overflow: hidden !important;
         }
         
         .program-item-actions button:hover {
@@ -137,20 +149,56 @@ function injectCustomStyles() {
             color: #fff !important;
         }
         
-        /* Now Playing indicator - special styling */
+        /* Now Playing indicator - GOLD styling */
         .now-playing-indicator {
-            background: var(--needle-red) !important;
-            border-color: var(--needle-red) !important;
-            color: #fff !important;
+            background: transparent !important;
+            border: 2px solid var(--brass-gold) !important;
+            color: var(--brass-gold) !important;
             cursor: default !important;
             font-weight: 700 !important;
+            padding: 6px 12px !important;
+            font-size: 0.7rem !important;
+        }
+        
+        /* Download button progress fill */
+        .download-track-btn::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 0%;
+            background: var(--brass-gold);
+            transition: width 0.3s ease;
+            z-index: -1;
+        }
+        
+        .download-track-btn.downloading {
+            border-color: var(--brass-gold) !important;
+            color: #333 !important;
+        }
+        
+        .download-track-btn.downloading::before {
+            animation: download-progress 3s ease-out forwards;
+        }
+        
+        @keyframes download-progress {
+            0% { width: 0%; background: var(--brass-gold); }
+            90% { width: 90%; background: var(--brass-gold); }
+            100% { width: 100%; background: #4CAF50; }
         }
         
         /* Downloaded state */
         .program-item-actions button.downloaded {
             color: #2e7d32 !important;
             border-color: #2e7d32 !important;
-            background: rgba(46, 125, 50, 0.08) !important;
+            background: rgba(46, 125, 50, 0.1) !important;
+        }
+        
+        .program-item-actions button.downloaded::before {
+            width: 100% !important;
+            background: rgba(46, 125, 50, 0.15) !important;
+            animation: none !important;
         }
         
         /* Remove button - red hover */
@@ -205,31 +253,219 @@ function injectCustomStyles() {
         }
         
         /* ========================================
-           SHUFFLE BUTTON PULSE
+           SHUFFLE BUTTON - RED BORDER WHEN ACTIVE
            ======================================== */
         .shuffle-btn-icon.active {
-            animation: shuffle-pulse 2s ease-in-out infinite;
+            border-color: var(--needle-red) !important;
+            border-width: 2px !important;
         }
         .shuffle-btn-icon.active .shuffle-mask {
-            animation: shuffle-glow 2s ease-in-out infinite;
+            /* No animation, just the red color */
         }
-        @keyframes shuffle-pulse {
-            0%, 100% { 
-                transform: scale(1);
-                border-color: var(--brass-gold);
-            }
-            50% { 
-                transform: scale(1.08);
-                border-color: var(--needle-red);
-            }
+        
+        /* ========================================
+           SETTINGS PANEL
+           ======================================== */
+        .settings-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(212, 175, 55, 0.5);
+            border-radius: 50%;
+            color: rgba(255,255,255,0.7);
+            font-size: 1.4rem;
+            cursor: pointer;
+            padding: 8px;
+            width: 40px;
+            height: 40px;
+            transition: color 0.2s, transform 0.2s, background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
         }
-        @keyframes shuffle-glow {
-            0%, 100% { 
-                box-shadow: 0 0 6px var(--needle-red);
-            }
-            50% { 
-                box-shadow: 0 0 14px var(--needle-red);
-            }
+        .settings-btn:hover {
+            color: var(--brass-gold);
+            background: rgba(0,0,0,0.6);
+            transform: rotate(30deg);
+        }
+        
+        /* Radio Now Playing Display */
+        .radio-now-playing {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 50;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            width: 90%;
+            max-width: 600px;
+        }
+        .radio-now-playing.visible {
+            opacity: 1;
+        }
+        .radio-now-playing .now-playing-artist {
+            font-family: 'Oswald', sans-serif;
+            font-size: clamp(2rem, 6vw, 3.5rem);
+            font-weight: 700;
+            color: var(--dark-walnut);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-shadow: 2px 2px 4px rgba(255,255,255,0.3), 0 0 20px rgba(212,175,55,0.2);
+            margin-bottom: 0.5rem;
+            line-height: 1.2;
+            word-wrap: break-word;
+        }
+        .radio-now-playing .now-playing-title {
+            font-family: 'Crimson Text', serif;
+            font-size: clamp(1.4rem, 4vw, 2.2rem);
+            font-weight: 600;
+            color: var(--dark-walnut);
+            font-style: italic;
+            line-height: 1.3;
+            text-shadow: 1px 1px 2px rgba(255,255,255,0.3);
+            word-wrap: break-word;
+        }
+        
+        .settings-panel {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to bottom, #1a1815, #2a2520);
+            border-bottom: 2px solid var(--brass-gold);
+            padding: 20px;
+            z-index: 3000;
+            font-family: 'Oswald', sans-serif;
+            color: #ddd;
+            transform: translateY(-100%);
+            transition: transform 0.3s ease;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .settings-panel.active {
+            display: block;
+            transform: translateY(0);
+        }
+        
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .settings-title {
+            font-size: 1.3rem;
+            color: var(--brass-gold);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .settings-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(212, 175, 55, 0.5);
+            border-radius: 50%;
+            color: rgba(255,255,255,0.7);
+            font-size: 1.2rem;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .settings-close:hover {
+            color: #fff;
+            background: rgba(0,0,0,0.6);
+        }
+        
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .setting-label {
+            font-size: 0.95rem;
+            color: #ccc;
+        }
+        .setting-description {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 3px;
+        }
+        
+        /* Settings Action Button */
+        .setting-action-btn {
+            background: transparent;
+            border: 1px solid var(--brass-gold);
+            color: var(--brass-gold);
+            padding: 8px 16px;
+            font-family: 'Oswald', sans-serif;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .setting-action-btn:hover {
+            background: var(--brass-gold);
+            color: #000;
+        }
+        .setting-action-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #444;
+            border-radius: 26px;
+            transition: 0.3s;
+        }
+        .toggle-slider::before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background: #888;
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--brass-gold);
+        }
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(24px);
+            background: #fff;
         }
         
         /* ========================================
@@ -298,21 +534,35 @@ function setStaticGain(value) {
 function setupVisibilityHandler() {
     document.addEventListener('visibilitychange', () => {
         APP.pageVisible = !document.hidden;
+        APP.isBackgrounded = document.hidden;
+        
         if (APP.isMobile && document.hidden && APP.staticGain) {
             APP.staticGain.gain.value = 0;
         }
+        
+        console.log('[Visibility] Page visible:', APP.pageVisible, 'Backgrounded:', APP.isBackgrounded);
     });
     
     window.addEventListener('blur', () => {
         if (APP.isMobile) {
             APP.pageVisible = false;
+            APP.isBackgrounded = true;
             if (APP.staticGain) APP.staticGain.gain.value = 0;
         }
     });
     
     window.addEventListener('focus', () => {
         APP.pageVisible = true;
+        APP.isBackgrounded = false;
     });
+}
+
+// Check if we should use simple transitions (for PWA background mode)
+function shouldUseSimpleTransitions() {
+    // Use simple transitions if:
+    // 1. Mobile device AND page is backgrounded/not visible
+    // 2. Running as installed PWA on mobile
+    return APP.isMobile && (APP.isBackgrounded || !APP.pageVisible);
 }
 
 function cleanPath(path) {
@@ -341,10 +591,16 @@ async function initializeApp() {
     console.log('[initializeApp] Starting, default currentBand:', APP.currentBand);
 
     injectCustomStyles(); 
+    loadSettings();       // Load user settings first
     loadUserPlaylists();
     registerServiceWorker();
     setupPWA(); // Initialize PWA Install Listeners
     setupVisibilityHandler();
+    
+    // Always try to restore shuffle state and track info
+    // Only skip restoring position if startWithShuffle is true
+    restorePlaybackState();
+    const shouldRestorePosition = !APP.settings.startWithShuffle;
 
     try {
         const plResponse = await fetch('serve.php?file=playlist.json');
@@ -380,11 +636,32 @@ async function initializeApp() {
         $('video-player').addEventListener('ended', handleAutoplay);
         
         setupControls();
-        setupMediaSession(); 
+        setupMediaSession();
+        createSettingsPanel();  // Create settings UI
+        addSettingsButton();    // Add gear icon
         
         const shuffleBtn = $('shuffle-btn');
         if (shuffleBtn && APP.radioState.isShuffled) {
             shuffleBtn.classList.add('active');
+        }
+        
+        // Determine start index
+        let startIndex = 0;
+        
+        if (shouldRestorePosition) {
+            // If we have track info from last session, try to find it in the (possibly reshuffled) playlist
+            if (APP.pendingRestoreTrackId) {
+                const foundIndex = findTrackInPlaylist(APP.pendingRestoreTrackId, APP.pendingRestoreTrackArtist);
+                if (foundIndex >= 0) {
+                    startIndex = foundIndex;
+                    console.log('[Restore] Found last track at index:', foundIndex);
+                } else {
+                    startIndex = APP.pendingRestoreIndex || 0;
+                    console.log('[Restore] Track not found, using saved index:', startIndex);
+                }
+            } else {
+                startIndex = APP.pendingRestoreIndex || 0;
+            }
         }
         
         console.log('[initializeApp] About to buildDial, currentBand:', APP.currentBand);
@@ -392,8 +669,27 @@ async function initializeApp() {
         gsap.to('.radio-cabinet', { opacity: 1, duration: 1.5, ease: 'power2.out' });
         
         APP.isPlaying = true;
-        console.log('[initializeApp] About to loadTrack(0), currentBand:', APP.currentBand);
-        loadTrack(0);
+        console.log('[initializeApp] About to loadTrack(' + startIndex + '), currentBand:', APP.currentBand);
+        loadTrack(startIndex);
+        
+        // If restoring position, seek to saved time after track loads
+        if (shouldRestorePosition && APP.pendingRestoreTime && APP.pendingRestoreTime > 0) {
+            setTimeout(() => {
+                if (APP.currentHowl && APP.currentHowl.duration() > APP.pendingRestoreTime) {
+                    APP.currentHowl.seek(APP.pendingRestoreTime);
+                    console.log('[Restore] Seeked to', APP.pendingRestoreTime);
+                }
+                APP.pendingRestoreTime = 0;
+            }, 1000);
+        }
+        
+        // Save playback state periodically and on page unload
+        setInterval(savePlaybackState, 30000); // Every 30 seconds
+        window.addEventListener('beforeunload', savePlaybackState);
+        window.addEventListener('pagehide', savePlaybackState);
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) savePlaybackState();
+        });
         
     } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -409,6 +705,7 @@ function setupPWA() {
     // 1. Check if already installed (standalone mode)
     if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
         console.log("App is running in standalone mode (already installed).");
+        APP.isPWA = true;
         return; 
     }
 
@@ -442,15 +739,21 @@ function setupPWA() {
         APP.deferredPrompt = e;
         console.log("PWA Install Prompt captured!");
         
-        // Show our custom button
-        const btn = document.getElementById('pwa-install-btn');
-        if (btn) btn.classList.add('visible');
+        // For Android mobile users, ALWAYS show the install button on every visit
+        if (APP.isAndroid && APP.isMobile) {
+            const btn = document.getElementById('pwa-install-btn');
+            if (btn) {
+                btn.classList.add('visible');
+                console.log("Showing install prompt for Android user");
+            }
+        }
     });
 
     // 4. Listen for successful installation
     window.addEventListener('appinstalled', () => {
         // Clear prompt
         APP.deferredPrompt = null;
+        APP.isPWA = true;
         // Hide button
         const btn = document.getElementById('pwa-install-btn');
         if (btn) btn.classList.remove('visible');
@@ -650,6 +953,251 @@ function saveUserPlaylists() {
     }
 }
 
+// =========================================================================
+// SETTINGS & PLAYBACK STATE MANAGEMENT
+// =========================================================================
+
+function loadSettings() {
+    try {
+        const stored = localStorage.getItem('zenith_settings');
+        if (stored) {
+            APP.settings = {...APP.settings, ...JSON.parse(stored)};
+        }
+    } catch (e) {
+        console.warn('Failed to load settings', e);
+    }
+}
+
+function saveSettings() {
+    try {
+        localStorage.setItem('zenith_settings', JSON.stringify(APP.settings));
+    } catch (e) {
+        console.warn('Failed to save settings', e);
+    }
+}
+
+function savePlaybackState() {
+    try {
+        const list = getCurrentTrackList();
+        const currentTrack = list && list[APP.currentIndex];
+        
+        const state = {
+            band: APP.currentBand,
+            index: APP.currentIndex,
+            time: APP.currentHowl ? APP.currentHowl.seek() : 0,
+            artistFilter: APP.radioState.activeArtistFilter,
+            genreFilter: APP.radioState.activeGenre,
+            isShuffled: APP.radioState.isShuffled,
+            timestamp: Date.now(),
+            // Save track identifying info to find it after reshuffle
+            currentTrackId: currentTrack ? (currentTrack.src_audio || (currentTrack.Title || currentTrack.title)) : null,
+            currentTrackArtist: currentTrack ? (currentTrack.Artist || currentTrack.artist) : null
+        };
+        localStorage.setItem('zenith_playback_state', JSON.stringify(state));
+    } catch (e) {
+        console.warn('Failed to save playback state', e);
+    }
+}
+
+function loadPlaybackState() {
+    try {
+        const stored = localStorage.getItem('zenith_playback_state');
+        return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+        console.warn('Failed to load playback state', e);
+        return null;
+    }
+}
+
+function restorePlaybackState() {
+    const state = loadPlaybackState();
+    if (!state) return false;
+    
+    // Only restore if within last 7 days
+    if (Date.now() - state.timestamp > 7 * 24 * 60 * 60 * 1000) return false;
+    
+    console.log('[Restore] Restoring playback state:', state);
+    
+    // Restore shuffle state
+    APP.radioState.isShuffled = state.isShuffled;
+    const shuffleBtn = $('shuffle-btn');
+    if (shuffleBtn) {
+        shuffleBtn.classList.toggle('active', state.isShuffled);
+    }
+    
+    // Restore filters
+    APP.radioState.activeArtistFilter = state.artistFilter || null;
+    APP.radioState.activeGenre = state.genreFilter || null;
+    
+    // Restore band
+    APP.currentBand = state.band || 'radio';
+    
+    // If it's a playlist band, ensure it exists
+    if (APP.currentBand.startsWith('playlist_')) {
+        const playlistId = APP.currentBand.replace('playlist_', '');
+        const playlist = APP.userPlaylists.find(p => p.id === playlistId);
+        if (!playlist) {
+            APP.currentBand = 'radio';
+        } else {
+            APP.playlist[APP.currentBand] = playlist.tracks;
+        }
+    }
+    
+    // Store track info to find after playlist is loaded (for reshuffled playlists)
+    APP.pendingRestoreTrackId = state.currentTrackId;
+    APP.pendingRestoreTrackArtist = state.currentTrackArtist;
+    
+    // Restore index (will be applied after data loads)
+    APP.pendingRestoreIndex = state.index || 0;
+    APP.pendingRestoreTime = state.time || 0;
+    
+    return true;
+}
+
+// Find the index of a track by its ID/info after reshuffle
+function findTrackInPlaylist(trackId, trackArtist) {
+    if (!trackId) return -1;
+    
+    const list = getCurrentTrackList();
+    if (!list || !list.length) return -1;
+    
+    for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        const id = t.src_audio || (t.Title || t.title);
+        const artist = t.Artist || t.artist;
+        
+        if (id === trackId && (!trackArtist || artist === trackArtist)) {
+            return i;
+        }
+    }
+    
+    return -1;
+}
+
+function createSettingsPanel() {
+    const panel = document.createElement('div');
+    panel.className = 'settings-panel';
+    panel.id = 'settings-panel';
+    
+    // Check if we should show the install option
+    const showInstallOption = APP.isAndroid && !APP.isPWA;
+    
+    panel.innerHTML = `
+        <div class="settings-header">
+            <span class="settings-title">⚙ Settings</span>
+            <button class="settings-close" id="settings-close">✕</button>
+        </div>
+        
+        <div class="setting-item">
+            <div>
+                <div class="setting-label">Start with random playback</div>
+                <div class="setting-description">When enabled, starts fresh each session. When disabled, resumes where you left off.</div>
+            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" id="setting-shuffle-start" ${APP.settings.startWithShuffle ? 'checked' : ''}>
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+        
+        ${showInstallOption ? `
+        <div class="setting-item" id="install-app-setting">
+            <div>
+                <div class="setting-label">Install App</div>
+                <div class="setting-description">Add to home screen for offline access and better experience.</div>
+            </div>
+            <button class="setting-action-btn" id="setting-install-btn">Install</button>
+        </div>
+        ` : ''}
+        
+        ${APP.isPWA ? `
+        <div class="setting-item">
+            <div>
+                <div class="setting-label">App Installed</div>
+                <div class="setting-description">You're running the installed app. To reinstall, remove from home screen first.</div>
+            </div>
+            <span style="color: #4CAF50; font-size: 1.2rem;">✓</span>
+        </div>
+        ` : ''}
+    `;
+    
+    document.body.appendChild(panel);
+    
+    // Event listeners
+    $('settings-close').addEventListener('click', closeSettings);
+    
+    $('setting-shuffle-start').addEventListener('change', (e) => {
+        APP.settings.startWithShuffle = e.target.checked;
+        saveSettings();
+    });
+    
+    // Install button handler
+    const installBtn = $('setting-install-btn');
+    if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+            if (APP.deferredPrompt) {
+                // Use the stored prompt
+                APP.deferredPrompt.prompt();
+                const { outcome } = await APP.deferredPrompt.userChoice;
+                console.log(`User response to install prompt: ${outcome}`);
+                APP.deferredPrompt = null;
+                
+                if (outcome === 'accepted') {
+                    installBtn.textContent = 'Installing...';
+                    installBtn.disabled = true;
+                }
+            } else {
+                // No prompt available - show manual instructions
+                alert('To install the app:\n\n1. Tap the browser menu (⋮)\n2. Select "Add to Home Screen"\n3. Tap "Add"\n\nThe app will appear on your home screen!');
+            }
+        });
+    }
+    
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+        if (panel.classList.contains('active') && 
+            !panel.contains(e.target) && 
+            !e.target.classList.contains('settings-btn')) {
+            closeSettings();
+        }
+    });
+}
+
+function openSettings() {
+    $('settings-panel').classList.add('active');
+}
+
+function closeSettings() {
+    $('settings-panel').classList.remove('active');
+}
+
+function addSettingsButton() {
+    // Add gear button to the speaker grille (top right)
+    const speakerGrille = qs('.speaker-grille');
+    if (speakerGrille && !$('settings-btn')) {
+        const settingsBtn = document.createElement('button');
+        settingsBtn.className = 'settings-btn';
+        settingsBtn.id = 'settings-btn';
+        settingsBtn.innerHTML = '⚙';
+        settingsBtn.title = 'Settings';
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openSettings();
+        });
+        speakerGrille.appendChild(settingsBtn);
+    }
+    
+    // Also add the radio now playing display to the speaker grille
+    if (speakerGrille && !$('radio-now-playing')) {
+        const nowPlaying = document.createElement('div');
+        nowPlaying.className = 'radio-now-playing';
+        nowPlaying.id = 'radio-now-playing';
+        nowPlaying.innerHTML = `
+            <div class="now-playing-artist"></div>
+            <div class="now-playing-title"></div>
+        `;
+        speakerGrille.appendChild(nowPlaying);
+    }
+}
 function createPlaylist(name) {
     const playlist = {
         id: Date.now().toString(),
@@ -1060,9 +1608,10 @@ function updateOfflineIndicators() {
             try {
                 const track = JSON.parse(trackData);
                 if (isTrackCached(track)) {
+                    btn.classList.remove('downloading');
                     btn.classList.add('downloaded');
                     btn.textContent = 'Downloaded';
-                } else {
+                } else if (!btn.classList.contains('downloading')) {
                     btn.classList.remove('downloaded');
                     btn.textContent = 'Download';
                 }
@@ -1145,6 +1694,10 @@ function buildDial() {
         const excerpt = $('excerpt-display');
         if(excerpt) { excerpt.innerHTML = ''; excerpt.style.display = 'none'; }
         
+        // Show the radio now playing display
+        const radioNowPlaying = $('radio-now-playing');
+        if (radioNowPlaying) radioNowPlaying.classList.add('visible');
+        
         APP.virtualState.pool = Array.from(document.querySelectorAll('.virtual-item'));
 
         setTimeout(() => {
@@ -1163,6 +1716,10 @@ function buildDial() {
         
         const excerpt = $('excerpt-display');
         if(excerpt) excerpt.style.display = '';
+        
+        // Hide the radio now playing display
+        const radioNowPlaying = $('radio-now-playing');
+        if (radioNowPlaying) radioNowPlaying.classList.remove('visible');
         
         container.innerHTML = `
             <div class="${indicatorClass} left" id="scroll-left">&#x300A;</div>
@@ -1618,6 +2175,12 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
 
     // Update Media Session Metadata
     updateMediaSessionMetadata(track);
+    
+    // Update Radio Now Playing Display
+    updateRadioNowPlaying(track);
+    
+    // Update Now Playing indicator in program guide if open
+    updateProgramGuideNowPlaying(index);
 
     if (APP.currentBand === 'radio') {
         srcAudio = 'radio/' + cleanPath(track.src_audio);
@@ -1703,7 +2266,11 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     });
 
     if (APP.currentHowl) {
-        if (APP.currentHowl.playing()) {
+        // If backgrounded, skip the fade transition - just stop and play new track
+        if (shouldUseSimpleTransitions()) {
+            APP.currentHowl.stop();
+            APP.currentHowl.unload();
+        } else if (APP.currentHowl.playing()) {
             if (APP.fadingHowl) APP.fadingHowl.unload();
             APP.fadingHowl = APP.currentHowl;
             APP.fadingHowl.fade(APP.fadingHowl.volume(), 0, 1500);
@@ -1717,7 +2284,10 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
 
     if (APP.isPlaying) {
         APP.currentHowl.play();
-        APP.currentHowl.fade(0, APP.volume, 500);
+        // Skip fade-in if backgrounded
+        if (!shouldUseSimpleTransitions()) {
+            APP.currentHowl.fade(0, APP.volume, 500);
+        }
         updatePlaybackState(); // Update MediaSession
     }
 
@@ -1732,13 +2302,73 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     APP.recentBandSwitch = false;
 }
 
+// Update the radio now playing display in the speaker grille
+function updateRadioNowPlaying(track) {
+    const display = $('radio-now-playing');
+    if (!display) return;
+    
+    if (APP.currentBand === 'radio' && track) {
+        const artist = track.artist || track.Artist || 'Unknown Artist';
+        const title = track.title || track.Title || 'Unknown Track';
+        
+        display.querySelector('.now-playing-artist').textContent = artist;
+        display.querySelector('.now-playing-title').textContent = title;
+        display.classList.add('visible');
+    } else {
+        display.classList.remove('visible');
+    }
+}
+
+// Update the now playing indicator in the program guide
+function updateProgramGuideNowPlaying(currentIndex) {
+    const content = $('program-guide-content');
+    if (!content) return;
+    
+    // Remove old active-track classes and now-playing indicators
+    content.querySelectorAll('.program-item.active-track').forEach(item => {
+        item.classList.remove('active-track');
+        const indicator = item.querySelector('.now-playing-indicator');
+        if (indicator) indicator.remove();
+    });
+    
+    // Add new active-track class
+    const items = content.querySelectorAll('.program-item[data-index]');
+    items.forEach(item => {
+        const idx = parseInt(item.dataset.index);
+        if (idx === currentIndex) {
+            item.classList.add('active-track');
+            // Add now playing indicator if not already there
+            const actions = item.querySelector('.program-item-actions');
+            if (actions && !actions.querySelector('.now-playing-indicator')) {
+                const indicator = document.createElement('div');
+                indicator.className = 'now-playing-indicator';
+                indicator.textContent = '▶ Playing';
+                actions.insertBefore(indicator, actions.firstChild);
+            }
+        }
+    });
+}
+
 function handleAutoplay() {
     const nextIndex = APP.currentIndex + 1;
     const list = getCurrentTrackList();
     const max = list.length;
     
-    if (nextIndex < max) tuneToStation(nextIndex);
-    else if (max > 0) tuneToStation(0); // Loop back
+    // If phone is backgrounded/locked, use simple direct playback
+    if (shouldUseSimpleTransitions()) {
+        console.log('[Autoplay] Using simple transition (backgrounded)');
+        if (nextIndex < max) {
+            APP.currentIndex = nextIndex;
+            loadTrack(nextIndex, false, true); // Simple load, no layout update
+        } else if (max > 0) {
+            APP.currentIndex = 0;
+            loadTrack(0, false, true);
+        }
+    } else {
+        // Normal animated transition
+        if (nextIndex < max) tuneToStation(nextIndex);
+        else if (max > 0) tuneToStation(0); // Loop back
+    }
 }
 
 function tuneToStation(index) {
@@ -1810,8 +2440,26 @@ function updateArrowButtons() {
     const list = getCurrentTrackList();
     const max = list.length;
     
-    left.style.opacity = APP.currentIndex === 0 ? '0.3' : '1';
-    right.style.opacity = APP.currentIndex === max - 1 ? '0.3' : '1';
+    // Use opacity for disabled state, keep color consistent
+    if (APP.currentIndex === 0) {
+        left.style.opacity = '0.3';
+        left.style.pointerEvents = 'none';
+    } else {
+        left.style.opacity = '1';
+        left.style.pointerEvents = 'auto';
+    }
+    
+    if (APP.currentIndex === max - 1) {
+        right.style.opacity = '0.3';
+        right.style.pointerEvents = 'none';
+    } else {
+        right.style.opacity = '1';
+        right.style.pointerEvents = 'auto';
+    }
+    
+    // Ensure consistent gold color for both arrows
+    left.style.color = 'var(--brass-gold)';
+    right.style.color = 'var(--brass-gold)';
 }
 
 function setupControls() {
@@ -1949,14 +2597,37 @@ function setupControls() {
     });
 
     $('shuffle-btn').addEventListener('click', (e) => {
+        // Debounce rapid clicks
+        if (APP.shuffleDebounce) return;
+        APP.shuffleDebounce = true;
+        setTimeout(() => { APP.shuffleDebounce = false; }, 500);
+        
+        // Stop any current transitions/loading
+        if (APP.isTransitioning) {
+            gsap.killTweensOf('#am-proxy');
+            gsap.killTweensOf('#dial-track');
+            gsap.killTweensOf('#fm-track');
+            APP.isTransitioning = false;
+        }
+        
+        // Clear any pending band switch
+        if (APP.bandSwitchTimer) {
+            clearTimeout(APP.bandSwitchTimer);
+            APP.bandSwitchTimer = null;
+        }
+        
         APP.radioState.isShuffled = !APP.radioState.isShuffled;
         e.currentTarget.classList.toggle('active');
         processRadioData();
         
         if(APP.currentBand === 'radio') {
-            APP.currentIndex = 0; 
+            APP.currentIndex = 0;
+            APP.currentTrackSrc = null; // Reset so loadTrack doesn't skip
             buildDial();
-            loadTrack(0);
+            
+            // Ensure we're playing and load fresh
+            APP.isPlaying = true;
+            loadTrack(0, true, false);
         }
 
         if (APP.radioState.viewMode === 'tracks') {
@@ -1991,6 +2662,7 @@ function openProgramGuide() {
 function renderBookList() {
     const content = $('program-guide-content');
     const list = APP.playlist[APP.currentBand] || [];
+    const showDownload = !APP.isIOS; // Only show download on Android
     
     content.innerHTML = list.map((track, index) => {
         const trackWithSource = {...track, sourceType: APP.currentBand};
@@ -2004,7 +2676,7 @@ function renderBookList() {
             </div>
             <div class="program-item-actions">
                 ${isCurrentTrack ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
-                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>
+                ${showDownload ? `<button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>` : ''}
                 <button class="add-to-playlist-btn" data-track-index="${index}">+ Playlist</button>
             </div>
         </div>`;
@@ -2029,6 +2701,8 @@ function renderBookList() {
 
 function renderTrackList() {
     const content = $('program-guide-content');
+    const showDownload = !APP.isIOS; // Only show download on Android
+    
     content.innerHTML = APP.radioPlaylist.map((track, index) => {
         const artist = track.artist || track.Artist;
         const title = track.title || track.Title;
@@ -2043,7 +2717,7 @@ function renderTrackList() {
             </div>
             <div class="program-item-actions">
                 ${isCurrentTrack ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
-                <button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>
+                ${showDownload ? `<button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>` : ''}
                 <button class="add-to-playlist-btn" data-track-index="${index}">+ Playlist</button>
             </div>
         </div>`;
@@ -2086,11 +2760,26 @@ function bindListButtonEvents(content, list) {
                 if (confirm('Remove this track from offline storage?')) {
                     uncacheTrack(track);
                     btn.classList.remove('downloaded');
+                    btn.textContent = 'Download';
                 }
             } else {
-                cacheTrack(track);
+                // Check if service worker is ready
+                if (!APP.swReady || !navigator.serviceWorker.controller) {
+                    console.warn('[Download] Service worker not ready yet');
+                    alert('Downloads will be available shortly. Please try again in a moment.');
+                    return;
+                }
+                
                 btn.classList.add('downloading');
-                setTimeout(() => btn.classList.remove('downloading'), 2000);
+                btn.textContent = 'Downloading...';
+                cacheTrack(track, (success) => {
+                    if (!success) {
+                        btn.classList.remove('downloading');
+                        btn.textContent = 'Download';
+                        console.warn('[Download] Failed to initiate download');
+                    }
+                    // The 'downloaded' class will be added by updateOfflineIndicators when SW confirms
+                });
             }
         });
     });
@@ -2098,6 +2787,7 @@ function bindListButtonEvents(content, list) {
 
 function renderArtistList() {
     const content = $('program-guide-content');
+    const showDownload = !APP.isIOS; // Only show download on Android
     const artists = {};
     APP.radioData.forEach(t => {
         const pf = t.ParentFolder;
@@ -2110,7 +2800,7 @@ function renderArtistList() {
             <div class="artist-list-item-content">
                 <div class="name">${artist.replace(/^\d+\s-\s/, '')}</div>
                 <div class="artist-actions">
-                    <button class="download-artist-btn" data-artist-folder="${artist}">Download</button>
+                    ${showDownload ? `<button class="download-artist-btn" data-artist-folder="${artist}">Download</button>` : ''}
                     <div class="count">${artists[artist]}</div>
                 </div>
             </div>
@@ -2182,13 +2872,14 @@ function renderGenreList() {
 
 function renderPlaylistList() {
     const content = $('program-guide-content');
+    const showDownload = !APP.isIOS; // Only show download on Android
     
     let html = `<div class="playlist-actions">
         <button class="create-playlist-btn" id="create-playlist-btn">+ New Playlist</button>
     </div>`;
     
     if (APP.userPlaylists.length === 0) {
-        html += '<div class="playlist-empty-state">No playlists yet. Create one to save songs for offline listening!</div>';
+        html += '<div class="playlist-empty-state">No playlists yet. Create one to save your favorite songs!</div>';
     } else {
         html += APP.userPlaylists.map(pl => {
             const cachedCount = pl.tracks.filter(t => isTrackCached(t)).length;
@@ -2197,11 +2888,11 @@ function renderPlaylistList() {
             <div class="filter-item playlist-list-item" data-playlist-id="${pl.id}">
                 <div class="playlist-info">
                     <div class="name">${pl.name}</div>
-                    <div class="offline-status">${cachedCount}/${pl.tracks.length} offline</div>
+                    ${showDownload ? `<div class="offline-status">${cachedCount}/${pl.tracks.length} offline</div>` : `<div class="offline-status">${pl.tracks.length} tracks</div>`}
                 </div>
                 <div class="playlist-meta">
-                    <button class="download-playlist-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${pl.id}" title="${allCached ? 'All downloaded' : 'Download all for offline'}">?</button>
-                    <button class="delete-playlist-btn" data-playlist-id="${pl.id}" title="Delete playlist">�</button>
+                    ${showDownload ? `<button class="download-playlist-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${pl.id}" title="${allCached ? 'All downloaded' : 'Download all for offline'}">&#x2193;</button>` : ''}
+                    <button class="delete-playlist-btn" data-playlist-id="${pl.id}" title="Delete playlist">&#x00d7;</button>
                 </div>
             </div>`;
         }).join('');
@@ -2246,6 +2937,7 @@ function renderPlaylistList() {
 function renderPlaylistTracks(playlistId) {
     const content = $('program-guide-content');
     const playlist = APP.userPlaylists.find(p => p.id === playlistId);
+    const showDownload = !APP.isIOS; // Only show download on Android
     
     if (!playlist) {
         renderPlaylistList();
@@ -2259,13 +2951,13 @@ function renderPlaylistTracks(playlistId) {
     const isPlayingThis = (APP.currentBand === 'playlist_' + playlistId);
     
     let html = `<div class="playlist-header-bar">
-        <button class="back-to-playlists-btn">? Back</button>
+        <button class="back-to-playlists-btn">← Back</button>
         <div class="playlist-title">${playlist.name}</div>
         <div style="display:flex; gap:10px;">
              ${playlist.tracks.length > 0 ? `<button class="download-all-btn play-playlist-btn ${isPlayingThis ? 'playing-mode' : ''}" data-playlist-id="${playlistId}" title="Play Playlist">
-                ${isPlayingThis ? 'Playing' : '? Play'}
+                ${isPlayingThis ? 'Playing' : '▶ Play'}
              </button>` : ''}
-             ${playlist.tracks.length > 0 ? `<button class="download-all-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${playlistId}" title="${allCached ? 'All downloaded' : 'Download all'}">? All</button>` : ''}
+             ${showDownload && playlist.tracks.length > 0 ? `<button class="download-all-btn ${allCached ? 'downloaded' : ''}" data-playlist-id="${playlistId}" title="${allCached ? 'All downloaded' : 'Download all'}">↓ All</button>` : ''}
         </div>
     </div>`;
     
@@ -2289,7 +2981,7 @@ function renderPlaylistTracks(playlistId) {
                 </div>
                 <div class="program-item-actions">
                     ${isActive ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
-                    <button class="download-track-btn ${isCached ? 'downloaded' : ''}" data-track='${trackJson}' data-track-index="${index}">${isCached ? 'Downloaded' : 'Download'}</button>
+                    ${showDownload ? `<button class="download-track-btn ${isCached ? 'downloaded' : ''}" data-track='${trackJson}' data-track-index="${index}">${isCached ? 'Downloaded' : 'Download'}</button>` : ''}
                     <button class="remove-from-playlist-btn" data-track-index="${index}">Remove</button>
                 </div>
             </div>`;
