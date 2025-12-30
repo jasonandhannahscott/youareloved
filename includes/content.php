@@ -39,9 +39,9 @@
 
                 <div class="center-console">
                     <div class="transport-controls-group">
-                        <button class="transport-btn" id="stop-btn" title="Stop">■</button>
-                        <button class="transport-btn" id="pause-btn" title="Pause">⏸</button>
-                        <button class="transport-btn active" id="play-btn" title="Play">▶</button>
+                        <button class="transport-btn" id="stop-btn" title="Stop">&#x23F9;</button>
+                        <button class="transport-btn" id="pause-btn" title="Pause">&#x23F8;</button>
+                        <button class="transport-btn active" id="play-btn" title="Play">&#x23F5;</button>
                     </div>
                     <button class="push-button program-guide-btn" id="guide-btn">List</button>
                 </div>
@@ -76,9 +76,9 @@
             </div>
             
             <div class="shuffle-container">
-                <div class="shuffle-btn-icon active" id="shuffle-btn" title="Shuffle">
-                    <div class="shuffle-mask"></div>
-                </div>
+                <button class="search-btn" id="search-btn" title="Search">&#x1F50D;</button>
+                <button class="shuffle-btn-icon active" id="shuffle-btn" title="Shuffle">&#x1F500;</button>
+                <button class="repeat-btn" id="repeat-btn" title="Repeat">&#x1F501;</button>
             </div>
         </div>
 

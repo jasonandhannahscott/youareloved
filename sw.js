@@ -1,8 +1,8 @@
-// ZENITH SERVICE WORKER - v3
+// ZENITH SERVICE WORKER - v4
 // Network-first for app files, cache-first for audio only
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const CACHE_NAME = `zenith-app-v${CACHE_VERSION}`;
-const AUDIO_CACHE_NAME = 'zenith-audio-v1';
+const AUDIO_CACHE_NAME = 'zenith-audio'; // Version-independent for persistence
 
 // These get precached but served network-first
 const APP_SHELL = [
@@ -254,6 +254,36 @@ self.addEventListener('message', (event) => {
                     client.postMessage({
                         type: 'AUDIO_CACHE_CLEARED'
                     });
+                });
+            });
+        });
+    }
+    
+    if (event.data.type === 'REFRESH_APP_CACHE') {
+        // Delete old app cache but keep audio cache
+        caches.keys().then(cacheNames => {
+            return Promise.all(
+                cacheNames.filter(name => name.startsWith('zenith-app-')).map(name => caches.delete(name))
+            );
+        }).then(() => {
+            // Re-cache app shell
+            return caches.open(CACHE_NAME).then(cache => {
+                return cache.addAll(APP_SHELL);
+            });
+        }).then(() => {
+            self.clients.matchAll().then(clients => {
+                clients.forEach(client => {
+                    client.postMessage({ type: 'APP_CACHE_REFRESHED' });
+                });
+            });
+        });
+    }
+    
+    if (event.data.type === 'DELETE_AUDIO_CACHE') {
+        caches.delete(AUDIO_CACHE_NAME).then(() => {
+            self.clients.matchAll().then(clients => {
+                clients.forEach(client => {
+                    client.postMessage({ type: 'AUDIO_CACHE_DELETED' });
                 });
             });
         });
