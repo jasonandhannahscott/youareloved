@@ -7,6 +7,9 @@
     --silver-text: #e0e0e0;
     --grille-height: 75%;
     --controls-height: 20%;
+	--max-rotation: 50deg;
+    --max-depth: 150px;
+    --dial-snap-duration: 0.5s;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }

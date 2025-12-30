@@ -1,122 +1,10 @@
-// ZENITH APP.JS - VERSION 6.2 - REFACTORED
-console.log('=== ZENITH APP.JS VERSION 6.2 LOADED ===');
+// ZENITH APP.JS - VERSION 6.3 - REFACTORED
+// Depends on: state.js, dial-renderer.js, audio-engine.js, playback-state.js
+console.log('=== ZENITH APP.JS VERSION 6.3 LOADED ===');
 
 // ============================================================================
-// CONFIGURATION CONSTANTS
+// ADDITIONAL UTILITIES & LEGACY COMPATIBILITY
 // ============================================================================
-const CONFIG = {
-    SECTION_WIDTH_DEFAULT: 180,
-    DEFAULT_VOLUME: 0.8,
-    STATE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
-    TOAST_DURATION: { short: 3000, medium: 5000, long: 8000 },
-    ANIMATION: { snap: 0.5, transition: 2.0, fade: 1500 },
-    VIRTUAL_POOL_MIN: 24,
-    MOMENTUM_FACTOR: 300,
-    STORAGE_WARNING_MB: 100,
-    STORAGE_WARNING_PERCENT: 90,
-    POSITION_UPDATE_INTERVAL: 1000,
-    STATE_SAVE_INTERVAL: 30000,
-    SW_UPDATE_INTERVAL: 60000,
-    SEARCH_DEBOUNCE_MS: 200,
-    SEARCH_MIN_CHARS: 2,
-    MAX_ROTATION: 50,
-    MAX_DEPTH: 150,
-    EDGE_RESISTANCE: 0.7
-};
-
-// Band type constants
-const BANDS = {
-    RADIO: 'radio',
-    BOOK1: 'book1',
-    BOOK2: 'book2',
-    PLAYLIST_PREFIX: 'playlist_',
-    isPlaylist: band => band?.startsWith('playlist_'),
-    getPlaylistId: band => band?.replace('playlist_', ''),
-    toPlaylistBand: id => 'playlist_' + id
-};
-
-// Service Worker message types
-const SW_MSG = {
-    SKIP_WAITING: 'SKIP_WAITING',
-    CACHE_AUDIO: 'CACHE_AUDIO',
-    UNCACHE_AUDIO: 'UNCACHE_AUDIO',
-    GET_CACHED_URLS: 'GET_CACHED_URLS',
-    REFRESH_APP_CACHE: 'REFRESH_APP_CACHE',
-    DELETE_AUDIO_CACHE: 'DELETE_AUDIO_CACHE',
-    CACHED_URLS_LIST: 'CACHED_URLS_LIST',
-    AUDIO_CACHED: 'AUDIO_CACHED',
-    AUDIO_UNCACHED: 'AUDIO_UNCACHED',
-    AUDIO_CACHE_FAILED: 'AUDIO_CACHE_FAILED',
-    AUDIO_CACHE_CLEARED: 'AUDIO_CACHE_CLEARED'
-};
-
-// ============================================================================
-// UTILITIES & SELECTORS
-// ============================================================================
-const $ = id => document.getElementById(id);
-const qs = s => document.querySelector(s);
-const qsa = s => document.querySelectorAll(s);
-const cleanPath = p => p ? p.replace(/\\/g, '/').replace(/\/\//g, '/') : '';
-const getSecureUrl = p => 'serve.php?file=' + encodeURIComponent(p).replace(/'/g, '%27');
-const shuffleArray = arr => { for(let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; };
-
-// Track property helpers - normalizes inconsistent casing
-const Track = {
-    getArtist: t => t?.artist || t?.Artist || 'Unknown Artist',
-    getTitle: t => t?.title || t?.Title || 'Unknown Title',
-    getId: t => t?.src_audio || (Track.getTitle(t) + Track.getArtist(t)),
-    getGenre: t => t?.genre || t?.Genre || 'Unknown',
-    getFolder: t => t?.ParentFolder || 'Unknown',
-    getPage: t => t?.page || '',
-    getExcerpt: t => t?.excerpt || '',
-    hasVideo: t => t?.src_video && /\.(mp4|mkv|webm)$/i.test(t.src_video),
-    // Create display string
-    getDisplayName: t => `${Track.getArtist(t)} - ${Track.getTitle(t)}`
-};
-
-// Track JSON encoding/decoding helpers
-const TrackJSON = {
-    encode: track => JSON.stringify(track).replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
-    decode: str => { try { return JSON.parse(str.replace(/&quot;/g, '"').replace(/&#39;/g, "'")); } catch { return null; } }
-};
-
-// Storage helpers with error handling
-const Storage = {
-    get(key, fallback = null) {
-        try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } 
-        catch { return fallback; }
-    },
-    set(key, value) {
-        try { localStorage.setItem(key, JSON.stringify(value)); return true; } 
-        catch { return false; }
-    }
-};
-
-// Timer management helper
-const Timers = {
-    active: {},
-    set(name, fn, delay) {
-        this.clear(name);
-        this.active[name] = setTimeout(fn, delay);
-        return this.active[name];
-    },
-    setInterval(name, fn, delay) {
-        this.clear(name);
-        this.active[name] = setInterval(fn, delay);
-        return this.active[name];
-    },
-    clear(name) {
-        if (this.active[name]) {
-            clearTimeout(this.active[name]);
-            clearInterval(this.active[name]);
-            delete this.active[name];
-        }
-    },
-    clearAll() {
-        Object.keys(this.active).forEach(name => this.clear(name));
-    }
-};
-
 // Event binding helper
 function bindEvents(selector, event, handler, parent = document) {
     parent.querySelectorAll(selector).forEach(el => el.addEventListener(event, handler));
@@ -127,36 +15,8 @@ function escapeTrackJson(track) { return TrackJSON.encode(track); }
 function parseTrackJson(str) { return TrackJSON.decode(str); }
 
 // ============================================================================
-// APPLICATION STATE
+// INSTANCE & BROADCAST CHANNEL
 // ============================================================================
-const APP = {
-    initialized: false, hasInteracted: false,
-    playlist: null, radioData: null, radioPlaylist: [], radioArtists: [], userPlaylists: [],
-    cachedUrls: new Set(), explicitDownloads: new Set(), swReady: false,
-    pageVisible: true, isBackgrounded: false, lastFrameTime: 0, frameCheckActive: true,
-    
-    isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
-    isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),
-    isAndroid: /Android/i.test(navigator.userAgent),
-    isPWA: window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
-    deferredPrompt: null,
-    
-    currentBand: BANDS.RADIO, currentIndex: 0, currentTrackSrc: null,
-    nextTrackHowl: null, nextTrackSrc: null, recentBandSwitch: false, pendingIndex: -1,
-    
-    audioContext: null, gainNode: null, staticNode: null, staticGain: null, musicGain: null,
-    currentHowl: null, fadingHowl: null,
-    isPlaying: false, isDragging: false, isTransitioning: false, manuallyPaused: false,
-    
-    sectionWidth: CONFIG.SECTION_WIDTH_DEFAULT, volume: CONFIG.DEFAULT_VOLUME,
-    expandTimer: null, volumeSliderTimeout: null, bandSwitchTimer: null, positionTimer: null, loadTimer: null,
-    shuffleDebounce: false, downloadProgress: null,
-    
-    settings: { startWithShuffle: true },
-    radioState: { isShuffled: true, isRepeat: false, viewMode: 'tracks', activeGenre: null, activeArtistFilter: null, lastArtistIndex: 0 },
-    virtualState: { poolSize: CONFIG.VIRTUAL_POOL_MIN, pool: [], totalWidth: 0, visibleRange: { start: 0, end: 0 } }
-};
-
 const INSTANCE_ID = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 let broadcastChannel = null;
 
@@ -353,8 +213,12 @@ function shouldEnableStatic() {
 }
 
 function setStaticGain(value) {
-    if (!APP.staticGain) return;
-    APP.staticGain.gain.value = shouldEnableStatic() ? value : 0;
+    // Use AudioEngine if available, otherwise fall back to APP.staticGain
+    if (typeof AudioEngine !== 'undefined' && AudioEngine.staticGain) {
+        AudioEngine.setStaticGain(value);
+    } else if (APP.staticGain) {
+        APP.staticGain.gain.value = shouldEnableStatic() ? value : 0;
+    }
 }
 
 // ============================================================================
@@ -441,7 +305,12 @@ function startPositionUpdater() {
 // ============================================================================
 function resumePlayback() {
     if (!APP.currentHowl) return;
-    if (APP.audioContext?.state === 'suspended') APP.audioContext.resume();
+    // Use AudioEngine if available
+    if (typeof AudioEngine !== 'undefined') {
+        AudioEngine.resume();
+    } else if (APP.audioContext?.state === 'suspended') {
+        APP.audioContext.resume();
+    }
     notifyPlaybackStarted();
     APP.currentHowl.play();
     APP.isPlaying = true;
@@ -460,7 +329,12 @@ function pausePlayback() {
 
 function playPlayback() {
     notifyPlaybackStarted();
-    if (APP.audioContext?.state === 'suspended') APP.audioContext.resume();
+    // Use AudioEngine if available
+    if (typeof AudioEngine !== 'undefined') {
+        AudioEngine.resume();
+    } else if (APP.audioContext?.state === 'suspended') {
+        APP.audioContext.resume();
+    }
     if (APP.currentHowl) { APP.currentHowl.play(); APP.isPlaying = true; }
     else { APP.isPlaying = true; loadTrack(APP.currentIndex, false); }
     const vid = $('video-player');
@@ -775,20 +649,37 @@ function updateInterfaceLayout(isVideo) {
     setTimeout(() => {
         const ref = qs('.station');
         if (ref?.offsetWidth > 0) APP.sectionWidth = ref.offsetWidth;
-        
+
         if (APP.currentBand === BANDS.RADIO) {
             setupDualDraggables();
-            snapVirtualTo(APP.currentIndex, true);
+            // REFACTORED:
+            DialRenderer.animateSnap($('am-proxy'), -(APP.currentIndex * APP.sectionWidth), {
+                immediate: true,
+                onUpdate: () => DialRenderer.renderVirtualPool(APP.virtualState.pool, APP.radioPlaylist, -(APP.currentIndex * APP.sectionWidth), $('main-dial-container').offsetWidth, APP.sectionWidth)
+            });
+
             const fmTrack = $('fm-track');
             const song = APP.radioPlaylist[APP.currentIndex];
             if (song && fmTrack) {
                 const artistIdx = APP.radioArtists.findIndex(a => a.folder === song.ParentFolder);
-                if (artistIdx !== -1) snapToPosition(fmTrack, fmTrack.parentElement, artistIdx, true);
+                if (artistIdx !== -1) {
+                    // REFACTORED:
+                    DialRenderer.animateSnap(fmTrack, ($('main-dial-container').offsetWidth/2) - (artistIdx * APP.sectionWidth) - APP.sectionWidth/2, {
+                        immediate: true,
+                        onUpdate: () => DialRenderer.updateStationStyles(fmTrack.parentElement, fmTrack, APP.sectionWidth)
+                    });
+                }
             }
         } else {
             setupSingleDraggable();
             const track = $('dial-track');
-            if (track) snapToPosition(track, track.parentElement, APP.currentIndex, true);
+            if (track) {
+                // REFACTORED:
+                DialRenderer.animateSnap(track, ($('main-dial-container').offsetWidth/2) - (APP.currentIndex * APP.sectionWidth) - APP.sectionWidth/2, {
+                    immediate: true,
+                    onUpdate: () => DialRenderer.updateStationStyles(track.parentElement, track, APP.sectionWidth)
+                });
+            }
         }
     }, 850);
 }
@@ -851,13 +742,21 @@ function buildDial() {
         APP.virtualState.pool = Array.from(document.querySelectorAll('.virtual-item'));
         
         setTimeout(() => {
-            const ref = qs('#fm-track .station');
-            if (ref?.offsetWidth > 0) APP.sectionWidth = ref.offsetWidth;
-            const amProxy = $('am-proxy');
-            if (amProxy) amProxy.style.width = (APP.radioPlaylist.length * APP.sectionWidth) + 'px';
-            setupDualDraggables();
-            renderVirtualDial(APP.currentIndex * -APP.sectionWidth);
-        }, 50);
+			const ref = qs('#fm-track .station');
+			if (ref?.offsetWidth > 0) APP.sectionWidth = ref.offsetWidth;
+			const amProxy = $('am-proxy');
+			if (amProxy) amProxy.style.width = (APP.radioPlaylist.length * APP.sectionWidth) + 'px';
+			
+			setupDualDraggables();
+			
+			DialRenderer.renderVirtualPool(
+				APP.virtualState.pool,
+				APP.radioPlaylist,
+				APP.currentIndex * -APP.sectionWidth,
+				container.offsetWidth,
+				APP.sectionWidth
+			);
+		}, 50);
     } else {
         container.classList.remove('dual-mode');
         const excerpt = $('excerpt-display');
@@ -935,83 +834,6 @@ function handleDialIndicatorClick(direction, element) {
         const newIndex = direction === 'left' ? Math.max(0, APP.currentIndex - 1) : Math.min(list.length - 1, APP.currentIndex + 1);
         if (newIndex !== APP.currentIndex) tuneToStation(newIndex);
     }
-}
-
-function updateActiveStations(track) {
-    if (!track) return;
-    const stations = track.querySelectorAll('.station');
-    const container = track.parentElement;
-    const halfScreen = container.offsetWidth / 2;
-    const currentX = gsap.getProperty(track, 'x');
-    const activeZone = halfScreen + APP.sectionWidth;
-    const maxRotation = 50;
-    const maxDepth = 150;
-    
-    stations.forEach((station, index) => {
-        const stationX = currentX + (index * APP.sectionWidth) + APP.sectionWidth / 2;
-        const dist = Math.abs(stationX - halfScreen);
-        
-        if (dist > activeZone) { station.style.opacity = 0; return; }
-        
-        const rawRotation = (stationX - halfScreen) / halfScreen * maxRotation;
-        const rotation = Math.max(-60, Math.min(60, rawRotation));
-        const normalizedDistance = dist / activeZone;
-        const scale = 1.0 - (Math.pow(normalizedDistance, 2) * 0.35);
-        let opacity = Math.cos(normalizedDistance * (Math.PI / 2)) * 1.2;
-        opacity = Math.max(0, Math.min(1, opacity));
-        
-        station.style.transform = `translateZ(-200px) rotateY(${rotation}deg) translateZ(${200 - (normalizedDistance * maxDepth)}px) scale(${scale})`;
-        station.style.opacity = opacity;
-        dist < APP.sectionWidth / 2 ? station.classList.add('active') : station.classList.remove('active');
-    });
-}
-
-function renderVirtualDial(currentX) {
-    if (!APP.radioPlaylist.length) return;
-    const container = $('main-dial-container');
-    if (!container?.offsetWidth) return;
-    
-    const centerOffset = container.offsetWidth / 2;
-    const itemWidth = APP.sectionWidth || 150;
-    const activeZone = centerOffset + itemWidth;
-    const virtualCenter = -currentX;
-    const centerIndex = Math.round(virtualCenter / itemWidth);
-    const halfPool = Math.floor(APP.virtualState.poolSize / 2);
-    const renderStart = centerIndex - halfPool;
-    
-    APP.virtualState.pool.forEach((el, i) => {
-        const dataIndex = renderStart + i;
-        
-        if (dataIndex < 0 || dataIndex >= APP.radioPlaylist.length) { el.style.opacity = 0; return; }
-        
-        const xPos = currentX + (dataIndex * itemWidth) + centerOffset - (itemWidth / 2);
-        
-        if (el.dataset.renderedIndex != dataIndex) {
-            const track = APP.radioPlaylist[dataIndex];
-            const artistEl = el.querySelector('.artist');
-            if (artistEl) artistEl.textContent = Track.getArtist(track);
-            const titleEl = el.querySelector('.title');
-            if (titleEl) titleEl.textContent = Track.getTitle(track);
-            el.dataset.renderedIndex = dataIndex;
-            const genre = Track.getGenre(track);
-            el.style.color = (genre === 'News' || genre === 'Sports') ? '#ff6b35' : '';
-        }
-        
-        const dist = Math.abs(xPos - centerOffset + (itemWidth / 2));
-        if (dist > activeZone) { el.style.opacity = 0; return; }
-        
-        const normalizedDist = dist / activeZone;
-        const rawRotation = (xPos - centerOffset + itemWidth / 2) / centerOffset * 50;
-        const rotation = Math.max(-60, Math.min(60, rawRotation));
-        const scale = 1.0 - (Math.pow(normalizedDist, 2) * 0.3);
-        let opacity = Math.cos(normalizedDist * (Math.PI / 2)) * 1.2;
-        opacity = Math.max(0, Math.min(1, opacity));
-        
-        dist < itemWidth / 2 ? el.classList.add('active') : el.classList.remove('active');
-        
-        el.style.transform = `translate3d(${xPos}px, 0, -200px) rotateY(${rotation}deg) translateZ(${200 - (normalizedDist * 100)}px) scale(${scale})`;
-        el.style.opacity = opacity;
-    });
 }
 
 function setupSingleDraggable() {
@@ -1147,105 +969,109 @@ function setupGenericDraggable(track, container, dataList, onDragCallback, onEnd
             trackVelocity();
         },
         onDrag: function() {
-            APP.isDragging = true;
-            updateActiveStations(track);
-            const offset = centerOffset - this.x - APP.sectionWidth / 2;
-            let currentIndex = Math.max(0, Math.min(Math.round(offset / APP.sectionWidth), dataList.length - 1));
-            if (onDragCallback) onDragCallback(currentIndex);
-        },
-        onDragEnd: function() {
-            cancelAnimationFrame(trackerId);
-            APP.isDragging = false;
-            const throwDist = Math.abs(velocity) > 0.2 ? velocity * momentumFactor : 0;
-            const offset = centerOffset - (this.x + throwDist) - APP.sectionWidth / 2;
-            let finalIndex = Math.max(0, Math.min(Math.round(offset / APP.sectionWidth), dataList.length - 1));
-            snapToPosition(track, container, finalIndex, false, () => { if (onEndCallback) onEndCallback(finalIndex); }, false);
+			APP.isDragging = true;
+
+			DialRenderer.updateStationStyles(container, track, APP.sectionWidth);
+			
+			const offset = centerOffset - this.x - APP.sectionWidth / 2;
+			let currentIndex = Math.max(0, Math.min(Math.round(offset / APP.sectionWidth), dataList.length - 1));
+			if (onDragCallback) onDragCallback(currentIndex);
+		},
+		onDragEnd: function() {
+			cancelAnimationFrame(trackerId);
+			APP.isDragging = false;
+			
+			// Calculate where to land
+			const throwDist = Math.abs(velocity) > 0.2 ? velocity * momentumFactor : 0;
+			const offset = centerOffset - (this.x + throwDist) - APP.sectionWidth / 2;
+			let finalIndex = Math.max(0, Math.min(Math.round(offset / APP.sectionWidth), dataList.length - 1));
+			
+			// Calculate exact target X position
+			const targetX = centerOffset - (finalIndex * APP.sectionWidth) - APP.sectionWidth / 2;
+
+			// NEW: Use unified animateSnap
+			DialRenderer.animateSnap(track, targetX, {
+				duration: 0.5,
+				ease: 'power2.out',
+				trackAudio: true, // Enable static/volume dip during snap
+				onUpdate: () => DialRenderer.updateStationStyles(container, track, APP.sectionWidth),
+				onComplete: () => { 
+					if (onEndCallback) onEndCallback(finalIndex); 
+				}
+			});
+		}
+	});
+}
+// ============================================================================
+// DIAL HELPER FUNCTIONS (Wrappers for DialRenderer)
+// ============================================================================
+
+/**
+ * Update active station styling for physical dial elements (non-virtualized)
+ */
+function updateActiveStations(trackElement) {
+    if (!trackElement) return;
+    const container = trackElement.parentElement;
+    DialRenderer.updateStationStyles(container, trackElement, APP.sectionWidth);
+}
+
+/**
+ * Render the virtual dial (AM band) at a given x position
+ */
+function renderVirtualDial(x) {
+    if (!APP.virtualState.pool.length) return;
+    const container = $('main-dial-container');
+    if (!container) return;
+    
+    DialRenderer.renderVirtualPool(
+        APP.virtualState.pool,
+        APP.radioPlaylist,
+        x,
+        container.offsetWidth,
+        APP.sectionWidth
+    );
+}
+
+/**
+ * Snap physical dial to a specific index position
+ * Legacy wrapper for DialRenderer.animateSnap
+ */
+function snapToPosition(track, container, index, immediate = false, callback = null, loadAudio = false) {
+    if (!track || !container) return;
+    
+    const centerOffset = container.offsetWidth / 2;
+    const targetX = centerOffset - (index * APP.sectionWidth) - APP.sectionWidth / 2;
+    
+    DialRenderer.animateSnap(track, targetX, {
+        immediate: immediate,
+        trackAudio: loadAudio && !immediate,
+        onUpdate: () => DialRenderer.updateStationStyles(container, track, APP.sectionWidth),
+        onComplete: () => {
+            if (loadAudio) loadTrack(index, false);
+            if (callback) callback();
         }
     });
 }
 
-function snapToPosition(track, container, index, immediate = false, onComplete = null, forceTransition = false) {
-    const centerOffset = container.offsetWidth / 2;
-    const targetX = centerOffset - (index * APP.sectionWidth) - APP.sectionWidth / 2;
-    const duration = forceTransition ? 2.0 : 0.5;
-    const ease = forceTransition ? 'power4.out' : 'power2.out';
-    let hasSwapped = false;
-    
-    if (forceTransition) APP.isTransitioning = true;
-    
-    if (immediate) {
-        gsap.set(track, { x: targetX });
-        if (onComplete) onComplete();
-        APP.isTransitioning = false;
-    } else {
-        gsap.to(track, {
-            x: targetX, duration, ease,
-            onUpdate: function() {
-                if (track.id.includes('am-track') || track.id === 'dial-track') {
-                    if (forceTransition) {
-                        if (!hasSwapped) { hasSwapped = true; APP.currentIndex = index; loadTrack(index, true, true); }
-                        const p = this.progress();
-                        const intensity = Math.sin(p * Math.PI);
-                        APP.musicGain.gain.value = APP.volume * (1 - (intensity * 0.5));
-                        setStaticGain(intensity * 0.3 * APP.volume);
-                    } else if (!APP.isDragging) {
-                        const dist = Math.abs(gsap.getProperty(track, 'x') - targetX);
-                        const normDist = Math.min(dist / (APP.sectionWidth / 2), 1);
-                        APP.musicGain.gain.value = (1 - normDist) * APP.volume;
-                        setStaticGain(APP.isPlaying ? (normDist * 0.3 * APP.volume) : 0);
-                    }
-                }
-                updateActiveStations(track);
-            },
-            onComplete: () => {
-                if (track.id.includes('am-track') || track.id === 'dial-track') {
-                    setStaticGain(0);
-                    APP.musicGain.gain.value = APP.isPlaying ? APP.volume : 0;
-                    APP.isTransitioning = false;
-                }
-                if (onComplete) onComplete();
-            }
-        });
-    }
-}
-
-function snapVirtualTo(index, immediate = false, onComplete = null, forceTransition = false) {
+/**
+ * Snap virtual dial (AM band) to a specific index position
+ * Legacy wrapper for DialRenderer.animateSnap
+ */
+function snapVirtualTo(index, immediate = false, callback = null, loadAudio = false) {
     const amProxy = $('am-proxy');
-    const targetX = -(index * APP.sectionWidth);
-    const duration = forceTransition ? 2.0 : 0.5;
-    const ease = forceTransition ? 'power4.out' : 'power2.out';
+    if (!amProxy) return;
     
-    if (immediate) {
-        gsap.set(amProxy, { x: targetX });
-        renderVirtualDial(targetX);
-        if (onComplete) onComplete();
-        APP.isTransitioning = false;
-    } else {
-        let hasSwapped = false;
-        gsap.to(amProxy, {
-            x: targetX, duration, ease, overwrite: true,
-            onUpdate: function() {
-                const currentX = gsap.getProperty(amProxy, 'x');
-                if (forceTransition) {
-                    if (!hasSwapped) { hasSwapped = true; APP.currentIndex = index; loadTrack(index, true, true); }
-                    const p = this.progress();
-                    const intensity = Math.sin(p * Math.PI);
-                    APP.musicGain.gain.value = APP.volume * (1 - (intensity * 0.5));
-                    setStaticGain(intensity * 0.3 * APP.volume);
-                } else {
-                    const dist = Math.abs(currentX - targetX);
-                    const normDist = Math.min(dist / (APP.sectionWidth / 2), 1);
-                    APP.musicGain.gain.value = (1 - normDist) * APP.volume;
-                    setStaticGain(APP.isPlaying ? (normDist * 0.3 * APP.volume) : 0);
-                }
-                renderVirtualDial(currentX);
-            },
-            onComplete: () => {
-                if (!forceTransition) { setStaticGain(0); APP.musicGain.gain.value = APP.isPlaying ? APP.volume : 0; APP.isTransitioning = false; }
-                if (onComplete) onComplete();
-            }
-        });
-    }
+    const targetX = -(index * APP.sectionWidth);
+    
+    DialRenderer.animateSnap(amProxy, targetX, {
+        immediate: immediate,
+        trackAudio: loadAudio && !immediate,
+        onUpdate: () => renderVirtualDial(gsap.getProperty(amProxy, 'x')),
+        onComplete: () => {
+            if (loadAudio) loadTrack(index, false);
+            if (callback) callback();
+        }
+    });
 }
 
 // ============================================================================
@@ -1265,7 +1091,7 @@ function updateProgramGuideNowPlaying(currentIndex) {
             if (actions && !actions.querySelector('.now-playing-indicator')) {
                 const indicator = document.createElement('div');
                 indicator.className = 'now-playing-indicator';
-                indicator.textContent = '▶ Playing';
+                indicator.textContent = '? Playing';
                 actions.insertBefore(indicator, actions.firstChild);
             }
         }
@@ -1319,7 +1145,7 @@ function renderListContent(list, sourceType = null) {
                 <div class="title">${Track.getTitle(track)}</div>
             </div>
             <div class="program-item-actions">
-                ${isCurrentTrack ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
+                ${isCurrentTrack ? '<div class="now-playing-indicator">? Playing</div>' : ''}
                 ${showDownload ? `<button class="download-track-btn" data-track='${trackJson}' data-track-index="${index}">Download</button>` : ''}
                 <button class="add-to-playlist-btn" data-track-index="${index}">+ Playlist</button>
             </div>
@@ -1624,11 +1450,11 @@ function renderPlaylistTracks(playlistId) {
     const allDownloaded = downloadedCount === playlist.tracks.length && playlist.tracks.length > 0;
     
     let html = `<div class="playlist-header-bar">
-        <button class="back-to-playlists-btn">← Back</button>
+        <button class="back-to-playlists-btn">? Back</button>
         <div class="playlist-title">${playlist.name}</div>
         <div style="display:flex;gap:10px;">
-            ${playlist.tracks.length > 0 ? `<button class="download-all-btn play-playlist-btn ${isPlayingThis ? 'playing-mode' : ''}" data-playlist-id="${playlistId}">${isPlayingThis ? 'Playing' : '▶ Play'}</button>` : ''}
-            ${showDownload && playlist.tracks.length > 0 ? `<button class="download-all-btn ${allDownloaded ? 'downloaded' : ''}" data-playlist-id="${playlistId}">↓ All</button>` : ''}
+            ${playlist.tracks.length > 0 ? `<button class="download-all-btn play-playlist-btn ${isPlayingThis ? 'playing-mode' : ''}" data-playlist-id="${playlistId}">${isPlayingThis ? 'Playing' : '? Play'}</button>` : ''}
+            ${showDownload && playlist.tracks.length > 0 ? `<button class="download-all-btn ${allDownloaded ? 'downloaded' : ''}" data-playlist-id="${playlistId}">? All</button>` : ''}
         </div></div>`;
     
     if (playlist.tracks.length === 0) {
@@ -1640,7 +1466,7 @@ function renderPlaylistTracks(playlistId) {
             return `<div class="program-item playlist-track-item ${isActive ? 'active-track' : ''}" data-track-index="${index}" data-playlist-id="${playlistId}">
                 <div class="program-item-main"><div class="artist">${Track.getArtist(track)}</div><div class="title">${Track.getTitle(track)}</div></div>
                 <div class="program-item-actions">
-                    ${isActive ? '<div class="now-playing-indicator">▶ Playing</div>' : ''}
+                    ${isActive ? '<div class="now-playing-indicator">? Playing</div>' : ''}
                     ${showDownload ? `<button class="download-track-btn ${isTrackDownloaded(track) ? 'downloaded' : ''}" data-track='${trackJson}'>${isTrackDownloaded(track) ? 'Downloaded' : 'Download'}</button>` : ''}
                     <button class="remove-from-playlist-btn" data-track-index="${index}">Remove</button>
                 </div></div>`;
@@ -1875,9 +1701,9 @@ function createSearchOverlay() {
     overlay.className = 'search-overlay';
     overlay.id = 'search-overlay';
     overlay.innerHTML = `<div class="search-header">
-        <span class="search-icon">🔍</span>
+        <span class="search-icon">??</span>
         <input type="text" class="search-input" id="search-input" placeholder="Search tracks, artists, genres...">
-        <button class="search-close-btn" id="search-close-btn">✕</button></div>
+        <button class="search-close-btn" id="search-close-btn">?</button></div>
         <div class="search-category-tabs" id="search-category-tabs">
             <div class="search-category-tab" data-category="tracks">Tracks</div>
             <div class="search-category-tab" data-category="book1">Book I</div>
@@ -2024,8 +1850,8 @@ function createSettingsPanel() {
     panel.id = 'settings-panel';
     const showInstallOption = !APP.isPWA && !APP.isIOS;
     panel.innerHTML = `<div class="settings-header">
-        <span class="settings-title">☰ Menu</span>
-        <button class="settings-close" id="settings-close">✕</button></div>
+        <span class="settings-title">? Menu</span>
+        <button class="settings-close" id="settings-close">?</button></div>
         <div class="setting-item"><div>
             <div class="setting-label">Start with random playback</div>
             <div class="setting-description">When enabled, starts fresh each session. When disabled, resumes where you left off.</div></div>
@@ -2045,7 +1871,7 @@ function createSettingsPanel() {
         ${APP.isPWA ? `<div class="setting-item"><div>
             <div class="setting-label">App Installed</div>
             <div class="setting-description">You're running the installed app. To reinstall, remove from home screen first.</div></div>
-            <span style="color: #4CAF50; font-size: 1.2rem;">✓</span></div>` : ''}`;
+            <span style="color: #4CAF50; font-size: 1.2rem;">?</span></div>` : ''}`;
     document.body.appendChild(panel);
     $('settings-close').addEventListener('click', closeSettings);
     $('setting-shuffle-start').addEventListener('change', (e) => { APP.settings.startWithShuffle = e.target.checked; saveSettings(); });
@@ -2088,7 +1914,7 @@ function createSettingsPanel() {
                 const { outcome } = await APP.deferredPrompt.userChoice;
                 APP.deferredPrompt = null;
                 if (outcome === 'accepted') { installBtn.textContent = 'Installing...'; installBtn.disabled = true; }
-            } else { alert('To install the app:\n\n1. Tap the browser menu (⋮)\n2. Select "Add to Home Screen"\n3. Tap "Add"\n\nThe app will appear on your home screen!'); }
+            } else { alert('To install the app:\n\n1. Tap the browser menu (?)\n2. Select "Add to Home Screen"\n3. Tap "Add"\n\nThe app will appear on your home screen!'); }
         });
     }
     document.addEventListener('click', (e) => {
@@ -2104,7 +1930,7 @@ function addSettingsButton() {
     if (speakerGrille && !$('settings-btn')) {
         const settingsBtn = document.createElement('button');
         settingsBtn.className = 'settings-btn'; settingsBtn.id = 'settings-btn';
-        settingsBtn.innerHTML = '☰'; settingsBtn.title = 'Menu';
+        settingsBtn.innerHTML = '?'; settingsBtn.title = 'Menu';
         settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings(); });
         speakerGrille.appendChild(settingsBtn);
     }
@@ -2301,15 +2127,22 @@ async function initializeApp() {
         } catch (e) { console.warn("Failed to load radio.json", e); }
 
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        APP.audioContext = new AudioCtx();
-        APP.gainNode = APP.audioContext.createGain();
-        APP.gainNode.gain.value = APP.volume;
-        APP.gainNode.connect(APP.audioContext.destination);
-        APP.musicGain = APP.audioContext.createGain();
-        APP.staticGain = APP.audioContext.createGain();
-        APP.musicGain.connect(APP.gainNode);
-        APP.staticGain.connect(APP.gainNode);
-        createStaticNoise();
+        
+        // Initialize Audio Engine (new module)
+        if (AudioEngine.init()) {
+            // Audio engine handles APP.audioContext, APP.gainNode, etc.
+        } else {
+            // Fallback to legacy initialization
+            APP.audioContext = new AudioCtx();
+            APP.gainNode = APP.audioContext.createGain();
+            APP.gainNode.gain.value = APP.volume;
+            APP.gainNode.connect(APP.audioContext.destination);
+            APP.musicGain = APP.audioContext.createGain();
+            APP.staticGain = APP.audioContext.createGain();
+            APP.musicGain.connect(APP.gainNode);
+            APP.staticGain.connect(APP.gainNode);
+            createStaticNoise();
+        }
         $('video-player').addEventListener('ended', handleAutoplay);
         setupControls();
         setupMediaSession();

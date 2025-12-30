@@ -1,6 +1,6 @@
-// ZENITH SERVICE WORKER - v9
+// ZENITH SERVICE WORKER - v10
 // Network-first for app files, cache-first for audio only
-const CACHE_VERSION = 9;
+const CACHE_VERSION = 10;
 const CACHE_NAME = `zenith-app-v${CACHE_VERSION}`;
 const AUDIO_CACHE_NAME = 'zenith-audio'; // Version-independent for persistence
 
@@ -9,6 +9,10 @@ const APP_SHELL = [
     './',
     './index.php',
     './css/styles.css',
+    './js/state.js',
+    './js/audio-engine.js',
+    './js/playback-state.js',
+    './js/dial-renderer.js',
     './js/app.js',
     './js/auth-gate.js',
     './js/init.js',

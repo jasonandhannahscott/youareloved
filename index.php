@@ -23,7 +23,17 @@ if (!empty($_SESSION['zenith_auth']) && $_SESSION['zenith_auth'] === true) {
 <?php include __DIR__ . '/includes/header.php'; ?>
 <?php include __DIR__ . '/includes/content.php'; ?>
 
-    <script src="js/auth-gate.js"></script>
+	<script src="js/auth-gate.js"></script>
+    
+    <!-- Core state and configuration -->
+    <script src="js/state.js"></script>
+    
+    <!-- Extracted modules -->
+    <script src="js/audio-engine.js"></script>
+    <script src="js/playback-state.js"></script>
+    <script src="js/dial-renderer.js"></script>
+    
+    <!-- Main application -->
     <script src="js/app.js"></script>
     <script src="js/init.js"></script>
 </body>
