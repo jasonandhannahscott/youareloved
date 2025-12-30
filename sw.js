@@ -1,6 +1,6 @@
-// ZENITH SERVICE WORKER - v4
+// ZENITH SERVICE WORKER - v9
 // Network-first for app files, cache-first for audio only
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 9;
 const CACHE_NAME = `zenith-app-v${CACHE_VERSION}`;
 const AUDIO_CACHE_NAME = 'zenith-audio'; // Version-independent for persistence
 
@@ -89,14 +89,37 @@ self.addEventListener('fetch', (event) => {
                 caches.open(AUDIO_CACHE_NAME).then((cache) => {
                     return cache.match(event.request).then((cachedResponse) => {
                         if (cachedResponse) {
+                            console.log('[SW] Audio from CACHE:', filePath);
+                            // Notify client about cache hit
+                            self.clients.matchAll().then(clients => {
+                                clients.forEach(client => {
+                                    client.postMessage({
+                                        type: 'AUDIO_SOURCE',
+                                        source: 'cache',
+                                        file: filePath
+                                    });
+                                });
+                            });
                             return cachedResponse;
                         }
+                        console.log('[SW] Audio from NETWORK:', filePath);
                         return fetch(event.request).then((networkResponse) => {
+                            // Notify client about network fetch
+                            self.clients.matchAll().then(clients => {
+                                clients.forEach(client => {
+                                    client.postMessage({
+                                        type: 'AUDIO_SOURCE',
+                                        source: 'network',
+                                        file: filePath
+                                    });
+                                });
+                            });
                             if (networkResponse.ok) {
                                 cache.put(event.request, networkResponse.clone());
                             }
                             return networkResponse;
                         }).catch(() => {
+                            console.log('[SW] Audio OFFLINE FAIL:', filePath);
                             return new Response('Audio not available offline', { status: 503 });
                         });
                     });
@@ -127,9 +150,9 @@ self.addEventListener('fetch', (event) => {
     }
 
     // EXTERNAL CDN ASSETS: Cache-first (they're versioned in URL)
+    // Note: fonts.gstatic.com uses CORS and must not be intercepted
     if (url.hostname === 'cdnjs.cloudflare.com' || 
-        url.hostname === 'fonts.googleapis.com' ||
-        url.hostname === 'fonts.gstatic.com') {
+        url.hostname === 'fonts.googleapis.com') {
         event.respondWith(
             caches.match(event.request).then((cachedResponse) => {
                 if (cachedResponse) {
@@ -147,6 +170,11 @@ self.addEventListener('fetch', (event) => {
             })
         );
         return;
+    }
+    
+    // fonts.gstatic.com - let browser handle directly (CORS)
+    if (url.hostname === 'fonts.gstatic.com') {
+        return; // Don't intercept, let browser handle
     }
 
     // ALL APP FILES (PHP, JS, CSS, etc): Network-first with cache fallback
