@@ -80,47 +80,11 @@ const AudioEngine = {
     
     /**
      * Resume audio context if suspended (required for autoplay policies)
-     * Also handles Android audio focus recovery scenarios
-     * @returns {Promise<boolean>} Success status
      */
     async resume() {
-        if (!this.context) return false;
-        
-        const state = this.context.state;
-        console.log('[AudioEngine] Resume requested, current state:', state);
-        
-        if (state === 'running') {
-            return true;
+        if (this.context?.state === 'suspended') {
+            await this.context.resume();
         }
-        
-        if (state === 'suspended' || state === 'interrupted') {
-            try {
-                await this.context.resume();
-                console.log('[AudioEngine] Context resumed, new state:', this.context.state);
-                
-                // Recreate static noise if needed (can get disconnected on Android)
-                if (this.staticNode && this.context.state === 'running') {
-                    try {
-                        // Verify static node is still valid
-                        const testGain = this.staticGain?.gain?.value;
-                        if (typeof testGain !== 'number') {
-                            console.log('[AudioEngine] Recreating static noise after resume');
-                            this.createStaticNoise();
-                        }
-                    } catch (e) {
-                        console.log('[AudioEngine] Static node invalid, recreating');
-                        this.createStaticNoise();
-                    }
-                }
-                
-                return this.context.state === 'running';
-            } catch (e) {
-                console.error('[AudioEngine] Resume failed:', e);
-                return false;
-            }
-        }
-        
-        return false;
     },
     
     /**
