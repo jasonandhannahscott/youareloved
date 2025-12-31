@@ -437,19 +437,6 @@ input[type=range].vertical-slider::-moz-range-thumb {
     border-radius: 2px; box-shadow: 0 0 4px rgba(212, 175, 55, 0.5);
 }
 
-.volume-arc {
-    position: absolute; top: 50%; left: 50%;
-    /* Use fixed size relative to max knob size rather than parent percentages */
-    width: 90px; height: 90px;
-    transform: translate(-50%, -50%) rotate(-90deg);
-    border-radius: 50%;
-    border: 3px solid transparent;
-    border-top-color: rgba(212, 175, 55, 0.5);
-    border-right-color: rgba(212, 175, 55, 0.5);
-    border-bottom-color: rgba(212, 175, 55, 0.5);
-    pointer-events: none; z-index: 1; box-sizing: border-box;
-}
-
 .knob-label {
     position: relative; white-space: nowrap;
     font-size: 0.85rem; letter-spacing: 0.2em; color: var(--brass-gold); text-transform: uppercase;

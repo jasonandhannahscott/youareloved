@@ -30,7 +30,6 @@
             <div class="controls-row">
                 
                 <div class="volume-control-group">
-                    <div class="volume-arc"></div>
                     <div class="volume-slider-popup">
                         <input type="range" id="volume-slider" class="vertical-slider" min="0" max="1" step="0.01" value="1">
                     </div>

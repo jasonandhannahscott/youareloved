@@ -68,6 +68,7 @@ const APP = {
     wasPlayingBeforeFreeze: false,
     interruptedAt: null,
     frozenAt: null,
+    audioContextNeedsResume: false, // Flag for Android audio focus recovery
     
     isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
     isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),

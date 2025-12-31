@@ -248,8 +248,66 @@ function setupAudioContextMonitoring() {
         
         if (state === 'suspended') {
             Debug.STATE('AudioContext suspended');
+            // Track that we need to resume on next play attempt
+            APP.audioContextNeedsResume = true;
         }
     });
+}
+
+/**
+ * Ensure AudioContext is in 'running' state before playback
+ * Critical for Android audio focus recovery after other apps have played audio
+ * @returns {Promise<boolean>} true if context is running
+ */
+async function ensureAudioContextRunning() {
+    const ctx = APP.audioContext || AudioEngine?.context;
+    if (!ctx) {
+        Debug.warn('No AudioContext available');
+        return false;
+    }
+    
+    const state = ctx.state;
+    Debug.AUDIO('ensureAudioContextRunning', { currentState: state });
+    
+    if (state === 'running') {
+        APP.audioContextNeedsResume = false;
+        return true;
+    }
+    
+    if (state === 'suspended' || state === 'interrupted') {
+        try {
+            Debug.AUDIO('Resuming AudioContext...');
+            await ctx.resume();
+            Debug.AUDIO('AudioContext resumed successfully', { newState: ctx.state });
+            APP.audioContextNeedsResume = false;
+            
+            // Recreate static noise if needed (can get disconnected on Android)
+            if (AudioEngine?.staticNode) {
+                try {
+                    // Check if static node is still connected
+                    if (AudioEngine.staticNode.context?.state !== 'running') {
+                        AudioEngine.createStaticNoise();
+                    }
+                } catch (e) {
+                    Debug.warn('Static noise recreation failed', e);
+                }
+            }
+            
+            return ctx.state === 'running';
+        } catch (err) {
+            Debug.error('AudioContext resume failed', err);
+            // On Android, may need user gesture - flag for retry on next interaction
+            APP.audioContextNeedsResume = true;
+            return false;
+        }
+    }
+    
+    if (state === 'closed') {
+        Debug.error('AudioContext is closed - cannot resume');
+        return false;
+    }
+    
+    return false;
 }
 
 // Playback recovery after interruption
@@ -260,9 +318,13 @@ async function recoverPlaybackAfterInterrupt() {
     APP.wasPlayingBeforeInterrupt = false;
     
     try {
-        // Resume audio context if needed
-        if (APP.audioContext?.state === 'suspended') {
-            await APP.audioContext.resume();
+        // Resume audio context using the robust helper
+        const contextReady = await ensureAudioContextRunning();
+        
+        if (!contextReady) {
+            Debug.warn('Context not ready after interrupt recovery attempt');
+            // Will retry on next user interaction
+            return;
         }
         
         // Check if Howl is still valid and try to resume
@@ -270,8 +332,11 @@ async function recoverPlaybackAfterInterrupt() {
             if (!APP.currentHowl.playing()) {
                 APP.currentHowl.play();
                 APP.isPlaying = true;
+                APP.manuallyPaused = false;
                 updatePlaybackState();
                 updateTransportButtonStates();
+                updateGrillePlaybackUI();
+                requestWakeLock();
                 Debug.PLAYBACK('Playback recovered after interrupt');
             }
         }
@@ -285,25 +350,28 @@ async function recoverFromSleep() {
     Debug.STATE('Recovering from sleep/background');
     
     // 1. Resume AudioContext if suspended
-    if (APP.audioContext?.state === 'suspended') {
-        try {
-            await APP.audioContext.resume();
-            Debug.AUDIO('AudioContext resumed after wake');
-        } catch (err) {
-            Debug.warn('AudioContext resume failed', err);
-        }
+    const contextReady = await ensureAudioContextRunning();
+    if (contextReady) {
+        Debug.AUDIO('AudioContext ready after wake');
+    } else {
+        Debug.warn('AudioContext not ready after wake - will retry on interaction');
     }
     
     // 2. Check if Howl stopped unexpectedly while we were supposed to be playing
     if (APP.isPlaying && APP.currentHowl && !APP.currentHowl.playing() && !APP.manuallyPaused) {
         Debug.PLAYBACK('Howl stopped unexpectedly, attempting recovery');
         
-        try {
-            APP.currentHowl.play();
-        } catch (e) {
-            Debug.warn('Howl play failed, reloading track');
-            // Reload the track as last resort
-            loadTrack(APP.currentIndex, false, true);
+        // Ensure context is ready before attempting replay
+        if (contextReady) {
+            try {
+                APP.currentHowl.play();
+            } catch (e) {
+                Debug.warn('Howl play failed, reloading track');
+                // Reload the track as last resort
+                loadTrack(APP.currentIndex, false, true);
+            }
+        } else {
+            Debug.warn('Cannot resume playback - AudioContext not running');
         }
     }
     
@@ -490,11 +558,45 @@ function setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
 
     const handlers = [
-        ['play', () => { APP.isPlaying = true; APP.currentHowl?.play(); updatePlaybackState(); }],
-        ['pause', () => { APP.isPlaying = false; APP.currentHowl?.pause(); updatePlaybackState(); }],
+        ['play', async () => { 
+            Debug.TRANSPORT('MediaSession play action');
+            // CRITICAL: Must resume AudioContext before playing (Android audio focus recovery)
+            await ensureAudioContextRunning();
+            APP.isPlaying = true; 
+            APP.manuallyPaused = false;
+            if (APP.currentHowl) {
+                APP.currentHowl.play(); 
+            } else {
+                // No Howl loaded - load current track
+                loadTrack(APP.currentIndex, false);
+            }
+            updatePlaybackState(); 
+            updateTransportButtonStates();
+            updateGrillePlaybackUI();
+            requestWakeLock();
+        }],
+        ['pause', () => { 
+            Debug.TRANSPORT('MediaSession pause action');
+            APP.isPlaying = false; 
+            APP.manuallyPaused = true;
+            APP.currentHowl?.pause(); 
+            updatePlaybackState(); 
+            updateTransportButtonStates();
+            updateGrillePlaybackUI();
+            releaseWakeLock();
+        }],
         ['previoustrack', () => { hideOnboardingHints(); const list = getCurrentTrackList(); if (list && list.length > 0) { const newIndex = APP.currentIndex > 0 ? APP.currentIndex - 1 : list.length - 1; tuneToStation(newIndex); } }],
         ['nexttrack', () => { hideOnboardingHints(); const list = getCurrentTrackList(); if (list && list.length > 0) { const newIndex = APP.currentIndex < list.length - 1 ? APP.currentIndex + 1 : 0; tuneToStation(newIndex); } }],
-        ['stop', () => { APP.isPlaying = false; APP.currentHowl?.stop(); updatePlaybackState(); }],
+        ['stop', () => { 
+            Debug.TRANSPORT('MediaSession stop action');
+            APP.isPlaying = false; 
+            APP.manuallyPaused = true;
+            APP.currentHowl?.stop(); 
+            updatePlaybackState(); 
+            updateTransportButtonStates();
+            updateGrillePlaybackUI();
+            releaseWakeLock();
+        }],
         ['seekto', d => { if (APP.currentHowl && d.seekTime) { APP.currentHowl.seek(d.seekTime); updatePositionState(); } }],
         ['seekbackward', d => { const skip = d.seekOffset || 10; if (APP.currentHowl) { APP.currentHowl.seek(Math.max(0, APP.currentHowl.seek() - skip)); updatePositionState(); } }],
         ['seekforward', d => { const skip = d.seekOffset || 10; if (APP.currentHowl) { APP.currentHowl.seek(APP.currentHowl.seek() + skip); updatePositionState(); } }]
@@ -605,17 +707,27 @@ function pausePlayback() {
     releaseWakeLock();
 }
 
-function playPlayback() {
+async function playPlayback() {
     Debug.TRANSPORT('playPlayback()', { hasHowl: !!APP.currentHowl, currentIndex: APP.currentIndex });
     notifyPlaybackStarted();
-    // Use AudioEngine if available
-    if (typeof AudioEngine !== 'undefined') {
-        AudioEngine.resume();
-    } else if (APP.audioContext?.state === 'suspended') {
-        APP.audioContext.resume();
+    
+    // CRITICAL: Await AudioContext resume before attempting playback
+    // This fixes Android audio focus issues when switching from other apps
+    const contextReady = await ensureAudioContextRunning();
+    if (!contextReady) {
+        Debug.warn('AudioContext not ready, playback may fail');
+        // Still try to play - some browsers auto-resume on play()
     }
-    if (APP.currentHowl) { APP.currentHowl.play(); APP.isPlaying = true; }
-    else { APP.isPlaying = true; loadTrack(APP.currentIndex, false); }
+    
+    APP.manuallyPaused = false;
+    
+    if (APP.currentHowl) { 
+        APP.currentHowl.play(); 
+        APP.isPlaying = true; 
+    } else { 
+        APP.isPlaying = true; 
+        loadTrack(APP.currentIndex, false); 
+    }
     const vid = $('video-player');
     if (vid?.src) vid.play().catch(() => {});
     updatePlaybackState();
@@ -840,7 +952,7 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     } else if (excerptDisplay) {
         // Hide excerpt display for Radio and Playlists
         excerptDisplay.innerHTML = '';
-        excerptDisplay.style.display = BANDS.isPlaylist(APP.currentBand) ? 'none' : '';
+        excerptDisplay.style.display = 'none';
     }
     if (updateLayout) updateInterfaceLayout(isVideo);
     
@@ -1022,20 +1134,27 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
                 setTimeout(handleAutoplay, 500);
             }
         },
-        onplayerror: (id, error) => { 
+        onplayerror: async (id, error) => { 
             Debug.error('Howl play error', error); 
             
             // Try to recover by resuming audio context
-            if (APP.audioContext?.state === 'suspended') {
-                APP.audioContext.resume().then(() => {
-                    Debug.PLAYBACK('AudioContext resumed after play error, retrying');
-                    APP.currentHowl?.play();
-                }).catch(() => {
-                    // Wait for user unlock
-                    APP.currentHowl?.once('unlock', () => APP.currentHowl?.play());
-                });
+            const contextReady = await ensureAudioContextRunning();
+            
+            if (contextReady) {
+                Debug.PLAYBACK('AudioContext resumed after play error, retrying');
+                // Small delay to let the context settle
+                setTimeout(() => {
+                    if (APP.currentHowl && !APP.currentHowl.playing()) {
+                        APP.currentHowl.play();
+                    }
+                }, 100);
             } else {
-                APP.currentHowl?.once('unlock', () => APP.currentHowl?.play()); 
+                Debug.warn('AudioContext still not ready, waiting for unlock');
+                // Wait for user unlock (gesture required on some browsers/platforms)
+                APP.currentHowl?.once('unlock', () => {
+                    Debug.PLAYBACK('Howl unlocked, attempting play');
+                    APP.currentHowl?.play();
+                });
             }
         }
     });
@@ -2778,6 +2897,20 @@ function addSettingsButton() {
 // =========================================================================
 
 function setupControls() {
+    // CRITICAL: Add a one-time listener to resume AudioContext on first user interaction
+    // This is essential for Android after other apps have had audio focus
+    const resumeAudioOnInteraction = async () => {
+        if (APP.audioContextNeedsResume) {
+            Debug.AUDIO('User interaction detected, attempting AudioContext resume');
+            await ensureAudioContextRunning();
+        }
+    };
+    
+    // Listen on multiple events to catch any user interaction
+    ['click', 'touchstart', 'keydown'].forEach(event => {
+        document.addEventListener(event, resumeAudioOnInteraction, { once: false, passive: true });
+    });
+    
     const volSlider = $('volume-slider');
     const volGroup = qs('.volume-control-group');
     const showVolumeSlider = () => { volGroup.classList.add('show-slider'); clearTimeout(APP.volumeSliderTimeout); };
