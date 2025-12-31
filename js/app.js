@@ -779,6 +779,10 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     APP.pendingIndex = index;
     APP.currentIndex = index; // Ensure currentIndex is in sync
     
+    // Increment load ID to invalidate any pending callbacks from previous loads
+    APP.loadId++;
+    const thisLoadId = APP.loadId;
+    
     const list = getCurrentTrackList();
     const track = list?.[index];
     if (!track) {
@@ -791,7 +795,8 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
         title: Track.getTitle(track), 
         artist: Track.getArtist(track),
         band: APP.currentBand,
-        isPlaying: APP.isPlaying 
+        isPlaying: APP.isPlaying,
+        loadId: thisLoadId
     });
     
     updateMediaSessionMetadata(track);
@@ -841,6 +846,12 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     
     const videoPlayer = $('video-player');
     
+    // Clean up any pending video error handler from previous loads
+    if (APP.pendingVideoErrorHandler) {
+        videoPlayer?.removeEventListener('error', APP.pendingVideoErrorHandler);
+        APP.pendingVideoErrorHandler = null;
+    }
+    
     if (isVideo) {
         if (APP.currentHowl) { APP.currentHowl.stop(); APP.currentHowl.unload(); }
         
@@ -848,11 +859,21 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
         APP.videoFallbackAudio = srcAudio;
         APP.videoFallbackIndex = index;
         const shouldPlayOnFallback = APP.isPlaying; // Capture intent at load time
+        const capturedLoadId = thisLoadId; // Capture load ID for this specific load
         
         // Set up error handler for video fallback to MP3
         const handleVideoError = () => {
+            // Check if this load is still current - if not, ignore
+            if (APP.loadId !== capturedLoadId) {
+                Debug.warn('Video error handler ignored (stale load)', { capturedLoadId, currentLoadId: APP.loadId });
+                videoPlayer.removeEventListener('error', handleVideoError);
+                APP.pendingVideoErrorHandler = null;
+                return;
+            }
+            
             Debug.warn('Video failed to load, falling back to MP3', { video: srcVideo, audio: srcAudio, shouldPlay: shouldPlayOnFallback });
             videoPlayer.removeEventListener('error', handleVideoError);
+            APP.pendingVideoErrorHandler = null;
             videoPlayer.pause();
             videoPlayer.removeAttribute('src');
             videoPlayer.load();
@@ -860,8 +881,8 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
             // Update UI to non-video mode
             updateInterfaceLayout(false);
             
-            // Load the audio fallback instead
-            if (APP.videoFallbackAudio) {
+            // Load the audio fallback instead - double check load ID is still current
+            if (APP.videoFallbackAudio && APP.loadId === capturedLoadId) {
                 const targetUrl = getSecureUrl(APP.videoFallbackAudio);
                 const fallbackHowl = new Howl({
                     src: [targetUrl], format: ['mp3'], html5: true,
@@ -870,7 +891,7 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
                     onpause: () => { Debug.PLAYBACK('Howl onpause (fallback)'); APP.isPlaying = false; updatePlaybackState(); updateTransportButtonStates(); if (APP.manuallyPaused) updateGrillePlaybackUI(); },
                     onstop: () => { Debug.PLAYBACK('Howl onstop (fallback)', { isTransitioning: APP.isTransitioning }); if (APP.isTransitioning) return; APP.isPlaying = false; updatePlaybackState(); updateTransportButtonStates(); },
                     onload: function() { Debug.AUDIO('Howl onload (fallback)'); if (APP.currentHowl !== this) { this.unload(); return; } if (APP.isPlaying) updatePositionState(); },
-                    onloaderror: (id, error) => { Debug.error('Fallback Howl load error', error); setTimeout(handleAutoplay, 500); },
+                    onloaderror: (id, error) => { Debug.error('Fallback Howl load error', error); if (APP.loadId === capturedLoadId) setTimeout(handleAutoplay, 500); },
                     onplayerror: (id, error) => { Debug.error('Fallback Howl play error', error); APP.currentHowl?.once('unlock', () => APP.currentHowl?.play()); }
                 });
                 
@@ -891,6 +912,8 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
             }
         };
         
+        // Store handler reference for cleanup on next load
+        APP.pendingVideoErrorHandler = handleVideoError;
         videoPlayer.addEventListener('error', handleVideoError, { once: true });
         videoPlayer.src = getSecureUrl(srcVideo);
         videoPlayer.load();
@@ -907,15 +930,18 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
     if (APP.nextTrackHowl) { APP.nextTrackHowl.unload(); APP.nextTrackHowl = null; APP.nextTrackSrc = null; }
     
     const targetUrl = getSecureUrl(srcAudio);
-    Debug.AUDIO('Creating Howl', { url: targetUrl, isPlaying: APP.isPlaying });
+    Debug.AUDIO('Creating Howl', { url: targetUrl, isPlaying: APP.isPlaying, loadId: thisLoadId });
     
     // Track retry attempts for this URL
     if (!APP.loadRetryCount) APP.loadRetryCount = {};
     const retryKey = srcAudio;
+    const capturedLoadId = thisLoadId; // Capture for callbacks
     
     const newHowl = new Howl({
         src: [targetUrl], format: ['mp3'], html5: true,
         onend: () => { 
+            // Only autoplay if this load is still current
+            if (APP.loadId !== capturedLoadId) return;
             Debug.PLAYBACK('Howl onend', { currentIndex: APP.currentIndex }); 
             setTimeout(handleAutoplay, 100); 
         },
@@ -959,6 +985,12 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
             if (APP.isPlaying) updatePositionState(); 
         },
         onloaderror: (id, error) => { 
+            // Ignore errors from stale loads
+            if (APP.loadId !== capturedLoadId) {
+                Debug.warn('Howl load error ignored (stale load)', { capturedLoadId, currentLoadId: APP.loadId });
+                return;
+            }
+            
             Debug.error('Howl load error', { error, online: APP.isOnline, retryCount: APP.loadRetryCount[retryKey] || 0 });
             
             const currentRetries = APP.loadRetryCount[retryKey] || 0;
@@ -976,7 +1008,8 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
                 Debug.PLAYBACK(`Retrying load in ${delay}ms (attempt ${currentRetries + 1}/${MAX_RETRIES})`);
                 
                 setTimeout(() => {
-                    if (APP.currentIndex === index) {
+                    // Double-check load is still current before retrying
+                    if (APP.loadId === capturedLoadId && APP.currentIndex === index) {
                         Debug.PLAYBACK('Executing retry');
                         loadTrack(index, false, true);
                     }

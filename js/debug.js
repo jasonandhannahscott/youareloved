@@ -512,6 +512,7 @@ const Debug = (() => {
             ['isTransitioning', APP.isTransitioning],
             ['currentBand', APP.currentBand],
             ['currentIndex', APP.currentIndex],
+            ['loadId', APP.loadId],
             ['volume', APP.volume?.toFixed(2)],
             ['Howl exists', !!APP.currentHowl],
             ['Howl playing', APP.currentHowl?.playing() ?? false],

@@ -77,6 +77,7 @@ const APP = {
     
     currentBand: BANDS.RADIO, currentIndex: 0, currentTrackSrc: null,
     nextTrackHowl: null, nextTrackSrc: null, recentBandSwitch: false, pendingIndex: -1,
+    loadId: 0, pendingVideoErrorHandler: null,
     
     audioContext: null, gainNode: null, staticNode: null, staticGain: null, musicGain: null,
     currentHowl: null, fadingHowl: null,
