@@ -27,6 +27,7 @@ if (!empty($_SESSION['zenith_auth']) && $_SESSION['zenith_auth'] === true) {
     
     <!-- Core state and configuration -->
     <script src="js/state.js"></script>
+    <script src="js/debug.js"></script>
     
     <!-- Extracted modules -->
     <script src="js/audio-engine.js"></script>

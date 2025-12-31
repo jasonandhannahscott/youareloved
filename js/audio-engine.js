@@ -105,6 +105,11 @@ const AudioEngine = {
     setStaticGain(value) {
         if (!this.staticGain) return;
         
+        // Guard against NaN/Infinity (can happen if APP.volume is undefined)
+        if (!Number.isFinite(value)) {
+            value = 0;
+        }
+        
         // Don't play static on mobile when backgrounded
         const shouldEnable = !(APP.isMobile && !APP.pageVisible);
         this.staticGain.gain.value = shouldEnable ? value : 0;
@@ -115,9 +120,14 @@ const AudioEngine = {
      * @param {number} value - Music gain level
      */
     setMusicGain(value) {
-        if (this.musicGain) {
-            this.musicGain.gain.value = value;
+        if (!this.musicGain) return;
+        
+        // Guard against NaN/Infinity
+        if (!Number.isFinite(value)) {
+            value = 0;
         }
+        
+        this.musicGain.gain.value = value;
     },
     
     /**
@@ -141,18 +151,22 @@ const AudioEngine = {
      * @param {number} maxStaticLevel - Maximum static level (default 0.3)
      */
     applyTuningEffect(distanceToSnap, maxStaticLevel = 0.3) {
-        // Check playing state - use PlaybackState if available, otherwise APP.isPlaying
+        // Guard against early calls before APP.volume is set
+        const volume = APP.volume || 0;
+        
+        // Static effect should play during tuning transitions
+        // even if playback hasn't started yet (to indicate "between stations")
         const isPlaying = (typeof PlaybackState !== 'undefined') 
             ? PlaybackState.is('playing') 
             : APP.isPlaying;
-            
-        if (!isPlaying) return;
         
-        // Music dips as we move between stations
-        this.setMusicGain((1 - distanceToSnap) * APP.volume);
+        // Always apply static during tuning (the radio "noise" between stations)
+        this.setStaticGain(distanceToSnap * maxStaticLevel * volume);
         
-        // Static increases between stations
-        this.setStaticGain(distanceToSnap * maxStaticLevel * APP.volume);
+        // Only affect music gain if we're playing
+        if (isPlaying) {
+            this.setMusicGain((1 - distanceToSnap) * volume);
+        }
     },
     
     /**

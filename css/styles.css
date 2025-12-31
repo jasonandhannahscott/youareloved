@@ -124,22 +124,31 @@ body {
     transform: translate(-50%, -50%);
     text-align: center; z-index: 50; pointer-events: none;
     opacity: 0; transition: opacity 0.5s ease;
-    width: 90%; max-width: 600px;
+    width: auto; max-width: 90%;
+    padding: 1.5rem 2.5rem;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    /* Background panel that auto-sizes to text */
+    background: rgba(244, 241, 234, 0.85);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.1);
+    border-radius: 4px;
 }
 .radio-now-playing.visible { opacity: 1; }
 .radio-now-playing .now-playing-artist {
     font-family: 'Oswald', sans-serif;
-    font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 700;
+    font-size: clamp(1.8rem, 5vw, 3rem); font-weight: 700;
     color: var(--dark-walnut); text-transform: uppercase;
     letter-spacing: 0.1em;
     text-shadow: 2px 2px 4px rgba(255,255,255,0.3), 0 0 20px rgba(212,175,55,0.2);
-    margin-bottom: 0.5rem; line-height: 1.2; word-wrap: break-word;
+    margin-bottom: 0.5rem; line-height: 1.2; 
+    word-wrap: break-word; overflow-wrap: break-word;
 }
 .radio-now-playing .now-playing-title {
     font-family: 'Crimson Text', serif;
-    font-size: clamp(1.4rem, 4vw, 2.2rem); font-weight: 600;
+    font-size: clamp(1.2rem, 3.5vw, 2rem); font-weight: 600;
     color: var(--dark-walnut); font-style: italic; line-height: 1.3;
-    text-shadow: 1px 1px 2px rgba(255,255,255,0.3); word-wrap: break-word;
+    text-shadow: 1px 1px 2px rgba(255,255,255,0.3); 
+    word-wrap: break-word; overflow-wrap: break-word;
 }
 
 /* Grille Power Button */
@@ -174,7 +183,7 @@ body {
     font-family: 'Crimson Text', serif;
     font-size: 1.3rem; line-height: 1.8;
     color: #2a1810; overflow-y: auto; opacity: 1;
-    z-index: 10; display: flex; flex-direction: column; justify-content: center;
+    z-index: 10; display: flex; flex-direction: column; justify-content: flex-start;
 }
 .excerpt-display.fade-out { opacity: 0; }
 .excerpt-display p { margin-bottom: 1rem; }
@@ -326,14 +335,15 @@ body {
     z-index: 5; opacity: 1; transition: opacity 0.5s;
     cursor: pointer; padding: 20px 15px; background: transparent;
 }
-.scroll-indicator.hidden { opacity: 0; pointer-events: none; }
+.scroll-indicator.hidden { opacity: 0; }
+.scroll-indicator.hidden:hover { opacity: 0.6; }
 .scroll-indicator.left { left: 0; animation: pulse-left 2s ease-in-out infinite; }
 .scroll-indicator.right { right: 0; animation: pulse-right 2s ease-in-out infinite; }
 .scroll-indicator:hover {
-    animation: none; transform: translateY(-50%) scale(1.2);
+    transform: translateY(-50%) scale(1.2);
     text-shadow: 0 0 20px rgba(212, 175, 55, 1); opacity: 1;
 }
-.scroll-indicator:active { animation: none; transform: translateY(-50%) scale(0.95); color: var(--tube-glow); }
+.scroll-indicator:active { transform: translateY(-50%) scale(0.95); color: var(--tube-glow); }
 .control-strip.minimized .scroll-indicator { display: none; }
 .radio-band .scroll-indicator { font-size: 1.2rem; }
 
@@ -429,9 +439,9 @@ input[type=range].vertical-slider::-moz-range-thumb {
 
 .volume-arc {
     position: absolute; top: 50%; left: 50%;
-    width: calc(70% + 20px); height: calc(70% + 20px);
-    max-width: 90px; max-height: 90px;
-    transform: translate(-50%, -50%) rotate(-135deg);
+    /* Use fixed size relative to max knob size rather than parent percentages */
+    width: 90px; height: 90px;
+    transform: translate(-50%, -50%) rotate(-90deg);
     border-radius: 50%;
     border: 3px solid transparent;
     border-top-color: rgba(212, 175, 55, 0.5);
@@ -451,14 +461,14 @@ input[type=range].vertical-slider::-moz-range-thumb {
     display: flex; align-items: center; justify-content: center; gap: 2vh;
     background: #1a1a1a; padding: 1vh 2vw; border-radius: 4px;
     box-shadow: inset 0 2px 5px rgba(0,0,0,0.8); border-bottom: 1px solid rgba(255,255,255,0.1);
-    flex: 0 1 auto; height: 80%;
+    flex: 0 1 auto; height: 80%; max-width: 100%; overflow: hidden;
 }
 
 /* Transport Controls */
 .transport-controls-group {
     display: flex; gap: 6px; background: #080808; padding: 8px 10px; border-radius: 6px;
     box-shadow: inset 0 4px 10px rgba(0,0,0,0.9), 0 1px 0 rgba(255,255,255,0.1); border: 1px solid #222;
-    align-items: stretch;
+    align-items: stretch; flex-shrink: 0;
 }
 
 .transport-btn {
@@ -483,7 +493,12 @@ input[type=range].vertical-slider::-moz-range-thumb {
 }
 .transport-btn.active .transport-icon { filter: drop-shadow(0 0 6px var(--tube-glow)); }
 #stop-btn, #pause-btn, #play-btn { color: var(--brass-gold); }
-#play-btn.active { color: var(--tube-glow); }
+#play-btn.active { 
+    color: var(--brass-gold); 
+}
+#play-btn.active .transport-icon { 
+    filter: drop-shadow(0 0 8px var(--brass-gold)) drop-shadow(0 0 15px rgba(212, 175, 55, 0.6)); 
+}
 
 .push-button {
     background: #2a1810; border: 1px solid #3d2817; color: var(--brass-gold);
@@ -627,7 +642,8 @@ input[type=range].vertical-slider::-moz-range-thumb {
     background: var(--brass-gold) !important; border-color: var(--brass-gold) !important; color: #fff !important;
 }
 
-/* Now Playing Indicator */
+/* Now Playing Indicator - higher specificity to override button styles */
+.program-item-actions .now-playing-indicator,
 .now-playing-indicator {
     background: rgba(212, 175, 55, 0.15) !important; border: 2px solid #d4af37 !important;
     color: #d4af37 !important; cursor: default !important; font-weight: 700 !important;
@@ -878,6 +894,10 @@ input[type=range].vertical-slider::-moz-range-thumb {
 .playlist-title { font-family: 'Oswald', sans-serif; font-size: 1.1rem; font-weight: 600; color: var(--dark-walnut); flex: 1; }
 
 /* Playlist Popover */
+.playlist-popover-backdrop {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: transparent; z-index: 2999;
+}
 .playlist-popover {
     position: fixed; z-index: 3000;
     background: linear-gradient(135deg, #f4f1ea 0%, #e8e2d5 100%);
@@ -906,6 +926,34 @@ input[type=range].vertical-slider::-moz-range-thumb {
 .playlist-popover-item input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brass-gold); cursor: pointer; }
 .playlist-popover-item .playlist-name { flex: 1; color: var(--dark-walnut); font-size: 1rem; }
 .playlist-popover-item .track-count { font-size: 0.8rem; color: #666; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 10px; }
+
+/* Create New Playlist option in popover */
+.playlist-popover-create-new {
+    padding: 12px 15px; cursor: pointer; transition: background 0.2s;
+    border-bottom: 1px solid rgba(0,0,0,0.1); font-family: 'Oswald', sans-serif;
+    color: var(--brass-gold); font-weight: 600; font-size: 0.95rem;
+    background: rgba(212, 175, 55, 0.08);
+}
+.playlist-popover-create-new:hover { background: rgba(212, 175, 55, 0.2); }
+
+/* Artist playlist button */
+.add-artist-to-playlist-btn {
+    padding: 4px 10px; border-radius: 3px;
+    border: 1px solid var(--brass-gold); background: rgba(212, 175, 55, 0.15);
+    color: var(--dark-walnut); font-size: 0.8rem; font-family: 'Oswald', sans-serif;
+    cursor: pointer; transition: all 0.2s; white-space: nowrap;
+}
+.add-artist-to-playlist-btn:hover { background: var(--brass-gold); color: #000; }
+
+/* Playlist add artist item (no checkbox) */
+.playlist-add-artist {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 15px; cursor: pointer; transition: background 0.2s;
+    border-bottom: 1px solid rgba(0,0,0,0.05); font-family: 'Oswald', sans-serif;
+}
+.playlist-add-artist:hover { background: rgba(212, 175, 55, 0.15); }
+.playlist-add-artist .playlist-name { flex: 1; color: var(--dark-walnut); font-size: 1rem; }
+.playlist-add-artist .track-count { font-size: 0.8rem; color: #666; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 10px; }
 
 /* Create Playlist Dialog */
 .create-playlist-dialog {

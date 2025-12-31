@@ -6,7 +6,8 @@
 // ============================================================================
 const CONFIG = {
     SECTION_WIDTH_DEFAULT: 180,
-    DEFAULT_VOLUME: 0.8,
+    DEFAULT_VOLUME: 1.0,
+    MIN_VOLUME: 0.1, // Minimum volume to prevent silent playback
     STATE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 7 days
     TOAST_DURATION: { short: 3000, medium: 5000, long: 8000 },
     ANIMATION: { snap: 0.5, transition: 2.0, fade: 1500 },
@@ -58,6 +59,16 @@ const APP = {
     cachedUrls: new Set(), explicitDownloads: new Set(), swReady: false,
     pageVisible: true, isBackgrounded: false, lastFrameTime: 0, frameCheckActive: true,
     
+    // Network and lifecycle state
+    isOnline: true,
+    pendingNetworkRetry: false,
+    loadRetryCount: {},
+    wakeLock: null,
+    wasPlayingBeforeInterrupt: false,
+    wasPlayingBeforeFreeze: false,
+    interruptedAt: null,
+    frozenAt: null,
+    
     isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
     isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),
     isAndroid: /Android/i.test(navigator.userAgent),
@@ -75,7 +86,7 @@ const APP = {
     expandTimer: null, volumeSliderTimeout: null, bandSwitchTimer: null, positionTimer: null, loadTimer: null,
     shuffleDebounce: false, downloadProgress: null,
     
-    settings: { startWithShuffle: true },
+    settings: { startWithShuffle: true, debugMode: false },
     radioState: { isShuffled: true, isRepeat: false, viewMode: 'tracks', activeGenre: null, activeArtistFilter: null, lastArtistIndex: 0 },
     virtualState: { poolSize: CONFIG.VIRTUAL_POOL_MIN, pool: [], totalWidth: 0, visibleRange: { start: 0, end: 0 } }
 };

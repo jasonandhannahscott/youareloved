@@ -148,13 +148,18 @@ const DialRenderer = {
                     const dist = Math.abs(this.targets()[0]._gsap.x - targetX);
                     const sectionWidth = APP.sectionWidth || 180; 
                     const normDist = Math.min(dist / (sectionWidth / 2), 1);
+                    const volume = APP.volume || 0; // Guard against undefined
                     
                     // Use AudioEngine if available, otherwise use APP directly
                     if (typeof AudioEngine !== 'undefined' && AudioEngine.context) {
                         AudioEngine.applyTuningEffect(normDist, 0.3);
                     } else {
-                        if (APP.musicGain) APP.musicGain.gain.value = (1 - normDist) * APP.volume;
-                        if (APP.staticGain && APP.isPlaying) APP.staticGain.gain.value = (normDist * 0.3 * APP.volume);
+                        // Only affect music if playing
+                        if (APP.musicGain && APP.isPlaying) APP.musicGain.gain.value = (1 - normDist) * volume;
+                        // Always play static during tuning
+                        if (APP.staticGain && Number.isFinite(normDist * 0.3 * volume)) {
+                            APP.staticGain.gain.value = normDist * 0.3 * volume;
+                        }
                     }
                 }
 
@@ -167,7 +172,7 @@ const DialRenderer = {
                         AudioEngine.clearTuningEffect();
                     } else {
                         if (APP.staticGain) APP.staticGain.gain.value = 0;
-                        if (APP.musicGain) APP.musicGain.gain.value = APP.isPlaying ? APP.volume : 0;
+                        if (APP.musicGain) APP.musicGain.gain.value = APP.isPlaying ? (APP.volume || 0) : 0;
                     }
                 }
                 if (onComplete) onComplete();
