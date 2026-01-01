@@ -578,8 +578,18 @@ function startPositionUpdater() {
 // PLAYBACK CONTROLS
 // ============================================================================
 function resumePlayback() {
-    Debug.TRANSPORT('resumePlayback()', { hasHowl: !!APP.currentHowl, wasPlaying: APP.isPlaying });
-    if (!APP.currentHowl) return;
+    const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
+    Debug.TRANSPORT('resumePlayback() CALLED', { 
+        hasHowl: !!APP.currentHowl, 
+        wasPlaying: APP.isPlaying,
+        manuallyPaused: APP.manuallyPaused,
+        howlPlaying: APP.currentHowl?.playing(),
+        caller: caller
+    });
+    if (!APP.currentHowl) {
+        Debug.TRANSPORT('resumePlayback() aborted - no currentHowl');
+        return;
+    }
     // Use AudioEngine if available
     if (typeof AudioEngine !== 'undefined') {
         AudioEngine.resume();
@@ -591,13 +601,21 @@ function resumePlayback() {
     APP.isPlaying = true;
     const vid = $('video-player');
     if (vid?.src) vid.play().catch(() => {});
+    Debug.TRANSPORT('resumePlayback() completed', { isPlaying: APP.isPlaying });
     updatePlaybackState();
     startPositionUpdater();
     requestWakeLock();
 }
 
 function pausePlayback() {
-    Debug.TRANSPORT('pausePlayback()', { wasPlaying: APP.isPlaying });
+    const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
+    Debug.TRANSPORT('pausePlayback() CALLED', { 
+        wasPlaying: APP.isPlaying, 
+        manuallyPaused: APP.manuallyPaused,
+        hasHowl: !!APP.currentHowl,
+        howlPlaying: APP.currentHowl?.playing(),
+        caller: caller
+    });
     APP.currentHowl?.pause();
     APP.isPlaying = false;
     $('video-player')?.pause();
@@ -606,7 +624,15 @@ function pausePlayback() {
 }
 
 function playPlayback() {
-    Debug.TRANSPORT('playPlayback()', { hasHowl: !!APP.currentHowl, currentIndex: APP.currentIndex, isPlaying: APP.isPlaying });
+    const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
+    Debug.TRANSPORT('playPlayback() CALLED', { 
+        hasHowl: !!APP.currentHowl, 
+        currentIndex: APP.currentIndex, 
+        isPlaying: APP.isPlaying,
+        manuallyPaused: APP.manuallyPaused,
+        howlPlaying: APP.currentHowl?.playing(),
+        caller: caller
+    });
     
     // Prevent starting multiple instances if already playing
     if (APP.currentHowl?.playing()) {
@@ -625,6 +651,7 @@ function playPlayback() {
     else { APP.isPlaying = true; loadTrack(APP.currentIndex, false); }
     const vid = $('video-player');
     if (vid?.src) vid.play().catch(() => {});
+    Debug.TRANSPORT('playPlayback() completed', { isPlaying: APP.isPlaying });
     updatePlaybackState();
     updateGrillePlaybackUI();
     startPositionUpdater();
@@ -632,7 +659,14 @@ function playPlayback() {
 }
 
 function stopPlayback(skipBroadcast = false) {
-    Debug.TRANSPORT('stopPlayback()', { wasPlaying: APP.isPlaying });
+    const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
+    Debug.TRANSPORT('stopPlayback() CALLED', { 
+        wasPlaying: APP.isPlaying,
+        manuallyPaused: APP.manuallyPaused,
+        hasHowl: !!APP.currentHowl,
+        skipBroadcast,
+        caller: caller
+    });
     APP.currentHowl?.stop();
     APP.isPlaying = false;
     const vid = $('video-player');
@@ -646,29 +680,59 @@ function updateGrillePlaybackUI() {
     const nowPlaying = $('radio-now-playing');
     const powerBtn = $('grille-power-btn');
     
+    const prevPowerVisible = powerBtn?.classList.contains('visible');
+    
     if (APP.currentBand === BANDS.RADIO) {
         if (APP.isPlaying) {
+            // Playing - show now playing, hide button
             nowPlaying?.classList.add('visible');
             powerBtn?.classList.remove('visible');
         } else if (APP.manuallyPaused) {
-            nowPlaying?.classList.remove('visible');
-            powerBtn?.classList.remove('visible');
-        } else {
+            // User clicked pause/stop - show button so they can resume
             nowPlaying?.classList.remove('visible');
             powerBtn?.classList.add('visible');
+        } else {
+            // Stopped unexpectedly (onstop fired without user action) - hide button
+            nowPlaying?.classList.remove('visible');
+            powerBtn?.classList.remove('visible');
         }
     } else {
         nowPlaying?.classList.remove('visible');
         powerBtn?.classList.remove('visible');
+    }
+    
+    const newPowerVisible = powerBtn?.classList.contains('visible');
+    if (prevPowerVisible !== newPowerVisible) {
+        Debug.UI('Grille power button visibility CHANGED', {
+            visible: newPowerVisible,
+            reason: APP.currentBand !== BANDS.RADIO ? 'not radio mode' : 
+                    APP.isPlaying ? 'is playing' : 
+                    APP.manuallyPaused ? 'manually paused (show)' : 'stopped unexpectedly (hide)',
+            band: APP.currentBand,
+            isPlaying: APP.isPlaying,
+            manuallyPaused: APP.manuallyPaused
+        });
     }
 }
 
 function updateRadioNowPlaying(track) {
     const display = $('radio-now-playing');
     if (!display) return;
+    
+    Debug.UI('updateRadioNowPlaying called', {
+        hasTrack: !!track,
+        currentBand: APP.currentBand,
+        isRadio: APP.currentBand === BANDS.RADIO,
+        artist: track ? Track.getArtist(track) : null,
+        title: track ? Track.getTitle(track) : null
+    });
+    
+    // Always update when in Radio mode, regardless of track source
     if (APP.currentBand === BANDS.RADIO && track) {
-        display.querySelector('.now-playing-artist').textContent = Track.getArtist(track);
-        display.querySelector('.now-playing-title').textContent = Track.getTitle(track);
+        const artist = Track.getArtist(track);
+        const title = Track.getTitle(track);
+        display.querySelector('.now-playing-artist').textContent = artist;
+        display.querySelector('.now-playing-title').textContent = title;
         updateGrillePlaybackUI();
     } else {
         display.classList.remove('visible');
@@ -767,7 +831,7 @@ function unmarkTrackAsDownloaded(track) {
     if (url) { const absUrl = new URL(url, window.location.origin).href; APP.explicitDownloads.delete(absUrl); APP.explicitDownloads.delete(url); saveExplicitDownloads(); }
 }
 
-function switchToBand(newBand) {
+function switchToBand(newBand, skipAutoLoad = false) {
     APP.currentBand = newBand;
     APP.currentIndex = 0;
     APP.recentBandSwitch = true;
@@ -775,7 +839,9 @@ function switchToBand(newBand) {
     APP.nextTrackSrc = null;
     if (APP.bandSwitchTimer) clearTimeout(APP.bandSwitchTimer);
     buildDial();
-    APP.bandSwitchTimer = setTimeout(() => { APP.bandSwitchTimer = null; loadTrack(0); }, 100);
+    if (!skipAutoLoad) {
+        APP.bandSwitchTimer = setTimeout(() => { APP.bandSwitchTimer = null; loadTrack(0); }, 100);
+    }
 }
 
 // ============================================================================
@@ -895,7 +961,7 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
                     src: [targetUrl], format: ['mp3'], html5: true,
                     onend: () => { Debug.PLAYBACK('Howl onend (fallback)', { currentIndex: APP.currentIndex }); setTimeout(handleAutoplay, 100); },
                     onplay: () => { Debug.PLAYBACK('Howl onplay (fallback)'); APP.isPlaying = true; APP.manuallyPaused = false; updatePlaybackState(); updateTransportButtonStates(); updateGrillePlaybackUI(); startPositionUpdater(); requestWakeLock(); },
-                    onpause: () => { Debug.PLAYBACK('Howl onpause (fallback)'); APP.isPlaying = false; updatePlaybackState(); updateTransportButtonStates(); if (APP.manuallyPaused) updateGrillePlaybackUI(); },
+                    onpause: () => { Debug.PLAYBACK('Howl onpause (fallback)'); if (APP.isTransitioning) return; APP.isPlaying = false; updatePlaybackState(); updateTransportButtonStates(); if (APP.manuallyPaused) updateGrillePlaybackUI(); },
                     onstop: () => { Debug.PLAYBACK('Howl onstop (fallback)', { isTransitioning: APP.isTransitioning }); if (APP.isTransitioning) return; APP.isPlaying = false; updatePlaybackState(); updateTransportButtonStates(); },
                     onload: function() { Debug.AUDIO('Howl onload (fallback)'); if (APP.currentHowl !== this) { this.unload(); return; } if (APP.isPlaying) updatePositionState(); },
                     onloaderror: (id, error) => { Debug.error('Fallback Howl load error', error); if (APP.loadId === capturedLoadId) setTimeout(handleAutoplay, 500); },
@@ -949,11 +1015,18 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
         onend: () => { 
             // Only autoplay if this load is still current
             if (APP.loadId !== capturedLoadId) return;
-            Debug.PLAYBACK('Howl onend', { currentIndex: APP.currentIndex }); 
+            Debug.PLAYBACK('Howl onend - track finished naturally', { 
+                currentIndex: APP.currentIndex,
+                manuallyPaused: APP.manuallyPaused,
+                isPlaying: APP.isPlaying
+            }); 
             setTimeout(handleAutoplay, 100); 
         },
         onplay: () => { 
-            Debug.PLAYBACK('Howl onplay'); 
+            Debug.PLAYBACK('Howl onplay - playback started', {
+                prevIsPlaying: APP.isPlaying,
+                prevManuallyPaused: APP.manuallyPaused
+            }); 
             APP.isPlaying = true; 
             APP.manuallyPaused = false; 
             // Clear retry count on successful play
@@ -966,7 +1039,12 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
             requestWakeLock();
         },
         onpause: () => { 
-            Debug.PLAYBACK('Howl onpause'); 
+            Debug.PLAYBACK('Howl onpause - playback paused', {
+                manuallyPaused: APP.manuallyPaused,
+                isTransitioning: APP.isTransitioning
+            }); 
+            // Don't update state if we're transitioning between tracks
+            if (APP.isTransitioning) return;
             APP.isPlaying = false; 
             updatePlaybackState(); 
             updateTransportButtonStates(); 
@@ -976,7 +1054,10 @@ function loadTrack(index, updateLayout = true, skipGainReset = false) {
             }
         },
         onstop: () => { 
-            Debug.PLAYBACK('Howl onstop', { isTransitioning: APP.isTransitioning }); 
+            Debug.PLAYBACK('Howl onstop - playback stopped', { 
+                isTransitioning: APP.isTransitioning,
+                manuallyPaused: APP.manuallyPaused
+            }); 
             if (APP.isTransitioning) return; 
             APP.isPlaying = false; 
             updatePlaybackState(); 
@@ -1158,6 +1239,9 @@ function tuneToStationWithStatic(index) {
 
 function tuneToStation(index) {
     if (APP.bandSwitchTimer) { clearTimeout(APP.bandSwitchTimer); APP.bandSwitchTimer = null; }
+    
+    // Set currentIndex immediately to prevent race conditions with setupDualDraggables
+    APP.currentIndex = index;
     
     if (APP.currentBand === BANDS.RADIO) {
         const fmTrack = $('fm-track');
@@ -1813,9 +1897,13 @@ function bindListEvents(content, list, sourceType = null) {
                 buildDial();
             }
             
+            // Set transitioning to prevent Howl callbacks from incorrectly updating state
+            APP.isTransitioning = true;
             APP.isPlaying = true;
             APP.manuallyPaused = false;
             tuneToStation(trackIndex);
+            // Clear transitioning after animation completes
+            setTimeout(() => { APP.isTransitioning = false; }, 600);
             closeProgramGuide();
         });
     });
@@ -2317,6 +2405,11 @@ function renderPlaylistTracks(playlistId) {
             const trackIndex = parseInt(trackItem.dataset.trackIndex);
             const bandKey = BANDS.toPlaylistBand(playlistId);
             
+            // Set state before tune/load
+            APP.isTransitioning = true;
+            APP.isPlaying = true;
+            APP.manuallyPaused = false;
+            
             if (APP.currentBand === bandKey) {
                 tuneToStation(trackIndex);
             } else {
@@ -2326,6 +2419,9 @@ function renderPlaylistTracks(playlistId) {
                 buildDial();
                 loadTrack(trackIndex);
             }
+            
+            // Clear transitioning after a delay
+            setTimeout(() => { APP.isTransitioning = false; }, 600);
             closeProgramGuide();
         });
     });
@@ -2643,15 +2739,32 @@ function bindSearchResultClicks() {
             const category = item.dataset.category;
             const index = parseInt(item.dataset.index);
             closeSearchOverlay();
-            if (category === 'tracks') { switchToBand(BANDS.RADIO); setTimeout(() => tuneToStation(index), 100); }
-            else if (category === BANDS.BOOK1 || category === BANDS.BOOK2) { switchToBand(category); setTimeout(() => tuneToStation(index), 100); }
+            
+            // Set state before any band switch or tune operation
+            APP.isTransitioning = true;
+            APP.isPlaying = true;
+            APP.manuallyPaused = false;
+            
+            if (category === 'tracks') { 
+                switchToBand(BANDS.RADIO, true); // skipAutoLoad=true since we're tuning to specific index
+                setTimeout(() => { tuneToStation(index); APP.isTransitioning = false; }, 100); 
+            }
+            else if (category === BANDS.BOOK1 || category === BANDS.BOOK2) { 
+                switchToBand(category, true); 
+                setTimeout(() => { tuneToStation(index); APP.isTransitioning = false; }, 100); 
+            }
             else if (category === 'artists') {
                 APP.radioState.activeArtistFilter = item.dataset.name || item.querySelector('.result-artist').textContent;
-                processRadioData(); switchToBand(BANDS.RADIO); setTimeout(() => tuneToStation(0), 100);
+                processRadioData(); 
+                switchToBand(BANDS.RADIO); // Don't skip - we want track 0
+                setTimeout(() => { APP.isTransitioning = false; }, 200);
             } else if (category === 'genres') {
                 APP.radioState.activeGenre = item.dataset.name || item.querySelector('.result-artist').textContent;
-                processRadioData(); switchToBand(BANDS.RADIO); setTimeout(() => tuneToStation(0), 100);
+                processRadioData(); 
+                switchToBand(BANDS.RADIO); // Don't skip - we want track 0
+                setTimeout(() => { APP.isTransitioning = false; }, 200);
             } else if (category === 'playlists') {
+                APP.isTransitioning = false; // No tune operation for playlists
                 const playlistId = item.dataset.id;
                 if (playlistId) switchToBand(BANDS.toPlaylistBand(playlistId));
             }
@@ -2775,7 +2888,12 @@ function addSettingsButton() {
         const powerBtn = document.createElement('div');
         powerBtn.className = 'grille-power-btn'; powerBtn.id = 'grille-power-btn'; powerBtn.title = 'Resume playback';
         powerBtn.innerHTML = `<svg viewBox="0 0 24 24" class="grille-play-icon" aria-hidden="true"><polygon points="8,5 19,12 8,19"></polygon></svg>`;
-        powerBtn.addEventListener('click', (e) => { e.stopPropagation(); APP.manuallyPaused = false; resumePlayback(); });
+        powerBtn.addEventListener('click', (e) => { 
+            e.stopPropagation(); 
+            Debug.TRANSPORT('GRILLE POWER button clicked', { wasPlaying: APP.isPlaying, wasManuallyPaused: APP.manuallyPaused });
+            APP.manuallyPaused = false; 
+            resumePlayback(); 
+        });
         speakerGrille.appendChild(powerBtn);
     }
 }
@@ -2824,9 +2942,24 @@ function setupControls() {
     volGroup.addEventListener('mouseleave', hideVolumeSlider);
     document.addEventListener('touchstart', (e) => { if (!volGroup.contains(e.target)) hideVolumeSliderNow(); }, { passive: true });
 
-    $('stop-btn').addEventListener('click', () => { APP.manuallyPaused = true; stopPlayback(); updateTransportButtonStates(); });
-    $('pause-btn').addEventListener('click', () => { APP.manuallyPaused = true; pausePlayback(); updateTransportButtonStates(); });
-    $('play-btn').addEventListener('click', () => { APP.manuallyPaused = false; playPlayback(); updateTransportButtonStates(); });
+    $('stop-btn').addEventListener('click', () => { 
+        Debug.TRANSPORT('STOP button clicked', { wasPlaying: APP.isPlaying, wasManuallyPaused: APP.manuallyPaused });
+        APP.manuallyPaused = true; 
+        stopPlayback(); 
+        updateTransportButtonStates(); 
+    });
+    $('pause-btn').addEventListener('click', () => { 
+        Debug.TRANSPORT('PAUSE button clicked', { wasPlaying: APP.isPlaying, wasManuallyPaused: APP.manuallyPaused });
+        APP.manuallyPaused = true; 
+        pausePlayback(); 
+        updateTransportButtonStates(); 
+    });
+    $('play-btn').addEventListener('click', () => { 
+        Debug.TRANSPORT('PLAY button clicked', { wasPlaying: APP.isPlaying, wasManuallyPaused: APP.manuallyPaused });
+        APP.manuallyPaused = false; 
+        playPlayback(); 
+        updateTransportButtonStates(); 
+    });
     $('left-arrow').addEventListener('click', () => { 
         hideOnboardingHints(); 
         if (APP.bandSwitchTimer) { clearTimeout(APP.bandSwitchTimer); APP.bandSwitchTimer = null; } 
@@ -2910,7 +3043,17 @@ function setupControls() {
         // Toast confirmation
         showToast(APP.radioState.isShuffled ? 'Shuffle ON' : 'Shuffle OFF', 2000, 'info');
         processRadioData();
-        if (APP.currentBand === BANDS.RADIO) { APP.currentIndex = 0; APP.currentTrackSrc = null; buildDial(); APP.isPlaying = true; APP.isTransitioning = true; loadTrack(0, true, false); APP.isTransitioning = false; }
+        if (APP.currentBand === BANDS.RADIO) { 
+            APP.currentIndex = 0; 
+            APP.currentTrackSrc = null; 
+            buildDial(); 
+            APP.isPlaying = true; 
+            APP.manuallyPaused = false;
+            APP.isTransitioning = true; 
+            loadTrack(0, true, false); 
+            // Clear transitioning after callbacks have fired
+            setTimeout(() => { APP.isTransitioning = false; }, 600);
+        }
         if (APP.radioState.viewMode === 'tracks') renderTrackList();
         else if (APP.radioState.viewMode === 'artists') renderArtistList();
     });
